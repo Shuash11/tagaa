@@ -43,7 +43,7 @@ var baseURLs = map[string]string{
 	"deepseek":   "https://api.deepseek.com",
 	"xai":        "https://api.x.ai",
 	"nvidia":     "https://api.nvcf.nvidia.com",
-	"groq":       "https://api.groq.com",
+	"groq":       "https://api.groq.com/openai",
 	"together":   "https://api.together.xyz",
 	"openrouter": "https://openrouter.ai/api",
 	"cohere":     "https://api.cohere.com",
