@@ -45,7 +45,7 @@ var baseURLs = map[string]string{
 	"nvidia":     "https://api.nvcf.nvidia.com",
 	"groq":       "https://api.groq.com",
 	"together":   "https://api.together.xyz",
-	"openrouter": "https://openrouter.ai",
+	"openrouter": "https://openrouter.ai/api",
 	"cohere":     "https://api.cohere.com",
 }
 
@@ -365,22 +365,34 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				m.agentField = 2
 				m.agentTemp = m.agents[m.agentCur].model
+				// skip model step if no provider set
+				if m.agentTemp == "" {
+					m.agentEdit = false
+				}
 			case "escape":
 				m.agentEdit = false
 			case "up":
-				for i := len(providers) - 1; i >= 0; i-- {
-					if providers[i].id == m.agentTemp && i > 0 {
-						m.agentTemp = providers[i-1].id
+				idx := len(providers) - 1
+				for i, p := range providers {
+					if p.id == m.agentTemp && i > 0 {
+						idx = i - 1
+						break
+					}
+					if p.id == m.agentTemp {
+						idx = len(providers) - 1
 						break
 					}
 				}
+				m.agentTemp = providers[idx].id
 			case "down":
-				for i := 0; i < len(providers); i++ {
-					if providers[i].id == m.agentTemp && i < len(providers)-1 {
-						m.agentTemp = providers[i+1].id
+				idx := 0
+				for i, p := range providers {
+					if p.id == m.agentTemp && i < len(providers)-1 {
+						idx = i + 1
 						break
 					}
 				}
+				m.agentTemp = providers[idx].id
 			}
 		case 2: // editing model
 			models := m.models[m.agents[m.agentCur].provider]
@@ -396,6 +408,10 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if len(models) == 0 {
 					return m, nil
 				}
+				if m.agentTemp == "" {
+					m.agentTemp = models[0]
+					return m, nil
+				}
 				idx := -1
 				for i, n := range models {
 					if n == m.agentTemp {
@@ -409,6 +425,10 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			case "down":
 				if len(models) == 0 {
+					return m, nil
+				}
+				if m.agentTemp == "" {
+					m.agentTemp = models[0]
 					return m, nil
 				}
 				idx := -1
@@ -525,7 +545,7 @@ func (m model) View() string {
 	}
 	for i := start; i < len(m.messages); i++ {
 		line := m.messages[i]
-		line += strings.Repeat(" ", msgW-len(line))
+		line += strings.Repeat(" ", max(0, msgW-len(line)))
 		body.WriteString(line + "\n")
 	}
 	extra := msgH - (len(m.messages) - start)
@@ -672,11 +692,16 @@ func (m model) agentsView(msgW, msgH int) string {
 	b.WriteString("\n\n")
 
 	// header
-	hdr := lipgloss.NewStyle().Faint(true).Foreground(muteC).Render(
-		fmt.Sprintf("%-16s %-14s %s", "Name", "Provider", "Model"),
-	)
-	b.WriteString("  " + hdr)
-	b.WriteString("\n")
+	if len(m.agents) > 0 {
+		hdr := lipgloss.NewStyle().Faint(true).Foreground(muteC).Render(
+			fmt.Sprintf("%-16s %-14s %s", "Name", "Provider", "Model"),
+		)
+		b.WriteString("  " + hdr)
+		b.WriteString("\n")
+	} else {
+		b.WriteString(lipgloss.NewStyle().Foreground(muteC).Render("  No agents yet — press a to add one"))
+		b.WriteString("\n")
+	}
 
 	for i, a := range m.agents {
 		cursor := "  "
@@ -798,13 +823,17 @@ func (m model) sideView() string {
 	))
 	pad("")
 	pad(lipgloss.NewStyle().Faint(true).Render(" AGENTS"))
-	for _, a := range m.agents {
-		mod := a.model
-		if mod == "" {
-			mod = "(no model)"
+	if len(m.agents) == 0 {
+		pad(lipgloss.NewStyle().Foreground(muteC).Render("  (none configured)"))
+	} else {
+		for _, a := range m.agents {
+			mod := a.model
+			if mod == "" {
+				mod = "(no model)"
+			}
+			pad(fmt.Sprintf("  %s", a.name))
+			pad(lipgloss.NewStyle().Foreground(muteC).Width(18).Render(fmt.Sprintf("    %s", mod)))
 		}
-		pad(fmt.Sprintf("  %s", a.name))
-		pad(lipgloss.NewStyle().Foreground(muteC).Width(18).Render(fmt.Sprintf("    %s", mod)))
 	}
 	pad("")
 	pad(lipgloss.NewStyle().Faint(true).Render(" KEYS"))
