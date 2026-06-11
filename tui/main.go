@@ -441,6 +441,8 @@ func (m model) updKeysTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				delete(m.modelErrors, id)
 				return m, fetchModelsCmd(id, key)
 			}
+			delete(m.modelErrors, id)
+			delete(m.models, id)
 			return m, nil
 		case "esc":
 			m.setEdit = false
@@ -476,6 +478,13 @@ func (m model) updKeysTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.setCur < len(providers)-1 {
 			m.setCur++
 		}
+	case "d":
+		id := providers[m.setCur].id
+		m.apiKeys[id] = ""
+		delete(m.modelErrors, id)
+		m.modelsLoading[id] = false
+		delete(m.models, id)
+		saveConfig(m)
 	}
 	return m, nil
 }
@@ -869,7 +878,7 @@ func (m model) keysView(msgW, msgH int) string {
 	if m.setEdit {
 		b.WriteString("Enter API key, Esc to cancel")
 	} else {
-		b.WriteString(lipgloss.NewStyle().Faint(true).Foreground(muteC).Render("↑↓ provider · Enter edit · Tab: Agents"))
+		b.WriteString(lipgloss.NewStyle().Faint(true).Foreground(muteC).Render("↑↓ provider · Enter edit · d delete · Tab: Agents"))
 	}
 
 	dialog := dialogStyle.Render(b.String())
