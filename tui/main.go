@@ -43,7 +43,7 @@ var baseURLs = map[string]string{
 	"deepseek":   "https://api.deepseek.com",
 	"xai":        "https://api.x.ai",
 	"nvidia":     "https://api.nvcf.nvidia.com",
-	"groq":       "https://api.groq.com",
+	"groq":       "https://api.groq.com/openai",
 	"together":   "https://api.together.xyz",
 	"openrouter": "https://openrouter.ai/api",
 	"cohere":     "https://api.cohere.com",
@@ -91,7 +91,6 @@ type model struct {
 	setCur        int
 	setEdit       bool
 	setKey        string
-	modeSelect    bool
 	selModel      string
 	agentCur      int
 	agentEdit     bool
@@ -223,7 +222,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setCur = 0
 			m.setEdit = false
 			m.setKey = ""
-			m.modeSelect = false
 			m.agentCur = 0
 			m.agentEdit = false
 			return m, nil
@@ -267,7 +265,6 @@ func (m model) updSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.settingsTab = 1 - m.settingsTab
 		m.setCur = 0
 		m.setEdit = false
-		m.modeSelect = false
 		m.agentEdit = false
 		return m, nil
 	}
@@ -278,39 +275,6 @@ func (m model) updSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updKeysTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.modeSelect {
-		models := m.models[providers[m.setCur].id]
-		switch msg.String() {
-		case "escape":
-			m.modeSelect = false
-		case "enter":
-			m.modeSelect = false
-		case "up":
-			idx := -1
-			for i, n := range models {
-				if n == m.selModel {
-					idx = i
-					break
-				}
-			}
-			if idx > 0 {
-				m.selModel = models[idx-1]
-			}
-		case "down":
-			idx := -1
-			for i, n := range models {
-				if n == m.selModel {
-					idx = i
-					break
-				}
-			}
-			if idx < len(models)-1 {
-				m.selModel = models[idx+1]
-			}
-		}
-		return m, nil
-	}
-
 	if m.setEdit {
 		switch msg.String() {
 		case "enter":
@@ -348,16 +312,9 @@ func (m model) updKeysTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "escape":
 		m.settings = false
-		m.modeSelect = false
 	case "enter":
-		id := providers[m.setCur].id
-		if m.apiKeys[id] != "" && len(m.models[id]) > 0 {
-			m.modeSelect = true
-			m.selModel = ""
-		} else {
-			m.setEdit = true
-			m.setKey = m.apiKeys[id]
-		}
+		m.setEdit = true
+		m.setKey = m.apiKeys[providers[m.setCur].id]
 	case "up":
 		if m.setCur > 0 {
 			m.setCur--
@@ -692,7 +649,7 @@ func (m model) keysView(msgW, msgH int) string {
 	for i, p := range providers {
 		cursor := "  "
 		color := lipgloss.Color("#E6E6E6")
-		if i == m.setCur && !m.setEdit && !m.modeSelect {
+		if i == m.setCur && !m.setEdit {
 			cursor = "▸ "
 			color = blueC
 		}
@@ -724,19 +681,11 @@ func (m model) keysView(msgW, msgH int) string {
 			models := m.models[p.id]
 			if len(models) > 0 && !m.modelsLoading[p.id] {
 				for _, mn := range models {
-					sel := "  "
-					modColor := muteC
-					if m.modeSelect {
-						if mn == m.selModel {
-							sel = "▸ "
-							modColor = greenC
-						}
-					}
-					line := fmt.Sprintf("   %s%s", sel, mn)
+					line := fmt.Sprintf("     %s", mn)
 					if len(line) > dw-4 {
 						line = line[:dw-4]
 					}
-					b.WriteString(lipgloss.NewStyle().Foreground(modColor).Render(line))
+					b.WriteString(lipgloss.NewStyle().Foreground(muteC).Render(line))
 					b.WriteString("\n")
 				}
 			} else if m.modelsLoading[p.id] {
@@ -753,9 +702,7 @@ func (m model) keysView(msgW, msgH int) string {
 	}
 
 	b.WriteString("\n")
-	if m.modeSelect {
-		b.WriteString(lipgloss.NewStyle().Faint(true).Foreground(muteC).Render("↑↓ choose model, Enter confirm, Esc back"))
-	} else if m.setEdit {
+	if m.setEdit {
 		b.WriteString("Enter API key, Esc to cancel")
 	} else {
 		b.WriteString(lipgloss.NewStyle().Faint(true).Foreground(muteC).Render("↑↓ provider · Enter edit · Tab: Agents"))
