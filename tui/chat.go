@@ -105,7 +105,12 @@ func sendChatCmd(m model) tea.Cmd {
 		}
 	}
 
-	base := baseURLs[agent.provider]
+	base, ok := baseURLs[agent.provider]
+	if !ok {
+		return func() tea.Msg {
+			return chatErrMsg{content: "Unknown provider: " + agent.provider}
+		}
+	}
 	key := m.apiKeys[agent.provider]
 
 	type chatMsg struct {
@@ -207,6 +212,8 @@ func sendChatCmd(m model) tea.Cmd {
 			short := fmt.Sprintf("HTTP %d", resp.StatusCode)
 			if resp.StatusCode == 401 {
 				short += " Invalid API key"
+			} else if resp.StatusCode == 403 {
+				short += " Access denied"
 			} else if resp.StatusCode == 429 {
 				short += " Rate limited"
 			} else if resp.StatusCode >= 500 {

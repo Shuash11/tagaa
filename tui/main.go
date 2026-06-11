@@ -123,6 +123,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.input = ""
 				m.isRunning = true
 				m.phase = "waiting"
+				m.scrollOffset = 0
 				return m, sendChatCmd(m)
 			}
 			return m, nil

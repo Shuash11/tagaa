@@ -51,7 +51,6 @@ type model struct {
 	setCur        int
 	setEdit       bool
 	setKey        string
-	selModel      string
 	agentCur      int
 	agentEdit     bool
 	agentField    int

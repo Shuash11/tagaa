@@ -81,6 +81,7 @@ func (m model) updSidebarConfig(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.sidebarCur = 0
 			} else {
 				m.sidebarConfig = false
+				m.messages = append(m.messages, Message{Kind: MsgSystem, Content: "No models loaded for " + pid + " — set API key in Ctrl+S Keys tab first"})
 			}
 			return m, nil
 		} else if m.sidebarStep == 2 {

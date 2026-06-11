@@ -13,7 +13,7 @@ func saveConfig(m model) {
 	if err != nil {
 		return
 	}
-	os.WriteFile(configFile, b, 0644)
+	os.WriteFile(configFile, b, 0600)
 }
 
 func loadConfig() (map[string]string, []agentCfg) {

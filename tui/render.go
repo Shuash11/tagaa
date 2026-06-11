@@ -143,8 +143,12 @@ func (m model) sideView() string {
 	} else {
 		for i, a := range m.agents {
 			pName := a.provider
-			if pName == "" || a.model == "" {
-				pName = "no key"
+			if pName == "" {
+				pName = "no provider"
+			}
+			modName := a.model
+			if modName == "" {
+				modName = "no model"
 			}
 			prefix := "  "
 			if m.sidebarConfig && m.sidebarStep == 0 && i == m.sidebarSel {
@@ -154,6 +158,7 @@ func (m model) sideView() string {
 			}
 			pad(fmt.Sprintf("%s%s", prefix, a.name))
 			pad(lipgloss.NewStyle().Foreground(muteC).Width(18).Render(fmt.Sprintf("    %s", pName)))
+			pad(lipgloss.NewStyle().Foreground(muteC).Width(18).Render(fmt.Sprintf("    %s", modName)))
 		}
 	}
 
