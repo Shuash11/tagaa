@@ -86,6 +86,11 @@ type model struct {
 	isRunning     bool
 	scrollOffset  int
 	sidebar       bool
+	sidebarConfig bool
+	sidebarSel    int
+	sidebarStep   int
+	sidebarCur    int
+	sidebarProv   string
 	settings      bool
 	settingsTab   int
 	setCur        int
@@ -210,6 +215,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.settings {
 			return m.updSettings(msg)
 		}
+		if m.sidebarConfig {
+			return m.updSidebarConfig(msg)
+		}
 		switch msg.String() {
 		case "ctrl+c", "ctrl+d":
 			return m, tea.Quit
@@ -231,6 +239,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+down":
 			if m.scrollOffset > 0 {
 				m.scrollOffset--
+			}
+			return m, nil
+		case "ctrl+e":
+			if m.sidebar && len(m.agents) > 0 {
+				m.sidebarConfig = true
+				m.sidebarSel = 0
+				m.sidebarStep = 0
 			}
 			return m, nil
 		case "up", "down", "left", "right":
@@ -255,6 +270,101 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(s) == 1 && s[0] >= 32 && s[0] < 127 {
 				m.input += s
 			}
+		}
+	}
+	return m, nil
+}
+
+func (m model) updSidebarConfig(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "escape":
+		m.sidebarConfig = false
+		return m, nil
+	case "up":
+		if m.sidebarStep == 0 {
+			if m.sidebarSel > 0 {
+				m.sidebarSel--
+			}
+		} else if m.sidebarStep == 1 {
+			// find previous provider with API key
+			for i := m.sidebarCur - 1; i >= 0; i-- {
+				if m.apiKeys[providers[i].id] != "" {
+					m.sidebarCur = i
+					break
+				}
+			}
+		} else if m.sidebarStep == 2 {
+			if m.sidebarCur > 0 {
+				m.sidebarCur--
+			}
+		}
+		return m, nil
+	case "down":
+		if m.sidebarStep == 0 {
+			if m.sidebarSel < len(m.agents)-1 {
+				m.sidebarSel++
+			}
+		} else if m.sidebarStep == 1 {
+			// find next provider with API key
+			for i := m.sidebarCur + 1; i < len(providers); i++ {
+				if m.apiKeys[providers[i].id] != "" {
+					m.sidebarCur = i
+					break
+				}
+			}
+		} else if m.sidebarStep == 2 {
+			models := m.models[m.sidebarProv]
+			if m.sidebarCur < len(models)-1 {
+				m.sidebarCur++
+			}
+		}
+		return m, nil
+	case "enter":
+		if m.sidebarStep == 0 {
+			// start provider selection, find first provider with API key
+			m.sidebarCur = 0
+			hasKey := false
+			for _, p := range providers {
+				if m.apiKeys[p.id] != "" {
+					hasKey = true
+					break
+				}
+			}
+			if !hasKey {
+				m.sidebarConfig = false
+				return m, nil
+			}
+			for i, p := range providers {
+				if m.apiKeys[p.id] != "" {
+					m.sidebarCur = i
+					break
+				}
+			}
+			m.sidebarStep = 1
+			m.sidebarProv = ""
+			return m, nil
+		} else if m.sidebarStep == 1 {
+			// provider selected, start model selection
+			pid := providers[m.sidebarCur].id
+			m.sidebarProv = pid
+			m.agents[m.sidebarSel].provider = pid
+			m.agents[m.sidebarSel].model = ""
+			models := m.models[pid]
+			if len(models) > 0 {
+				m.sidebarStep = 2
+				m.sidebarCur = 0
+			} else {
+				m.sidebarConfig = false
+			}
+			return m, nil
+		} else if m.sidebarStep == 2 {
+			// model selected
+			models := m.models[m.sidebarProv]
+			if m.sidebarCur < len(models) {
+				m.agents[m.sidebarSel].model = models[m.sidebarCur]
+			}
+			m.sidebarConfig = false
+			return m, nil
 		}
 	}
 	return m, nil
@@ -601,6 +711,12 @@ func (m model) View() string {
 	}
 
 	msgs := lipgloss.NewStyle().Background(bg).Width(msgW).Render(body.String())
+
+	// sidebar config dropdown overlay
+	if m.sidebarConfig && m.sidebarStep > 0 {
+		msgs = m.sidebarDropdown(msgW, msgH)
+	}
+
 	mainCol := lipgloss.JoinVertical(lipgloss.Top, hdr, msgs, inp)
 
 	if m.sidebar {
@@ -847,6 +963,76 @@ func (m model) agentsView(msgW, msgH int) string {
 	return lipgloss.Place(msgW, msgH, lipgloss.Center, lipgloss.Center, dialog, lipgloss.WithWhitespaceBackground(bg))
 }
 
+func (m model) sidebarDropdown(w, h int) string {
+	dw := 40
+	if w < dw+4 { dw = w - 4 }
+	if dw < 20 { dw = 20 }
+
+	style := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(accentC).
+		Padding(0, 1).
+		Width(dw).
+		Background(dialogBg)
+
+	var b strings.Builder
+
+	agent := m.agents[m.sidebarSel]
+	if m.sidebarStep == 1 {
+		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(accentC).Render("Select Provider"))
+		b.WriteString(lipgloss.NewStyle().Faint(true).Foreground(muteC).Render(" for " + agent.name))
+		b.WriteString("\n\n")
+		for i, p := range providers {
+			if m.apiKeys[p.id] == "" {
+				continue
+			}
+			sel := "  "
+			color := lipgloss.Color("#E6E6E6")
+			if i == m.sidebarCur {
+				sel = "▸ "
+				color = accentC
+			}
+			line := fmt.Sprintf("%s%s", sel, p.label)
+			b.WriteString(lipgloss.NewStyle().Foreground(color).Render(line))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+		b.WriteString(lipgloss.NewStyle().Faint(true).Foreground(muteC).Render("↑↓ Enter Esc"))
+	} else if m.sidebarStep == 2 {
+		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(accentC).Render("Select Model"))
+		b.WriteString(lipgloss.NewStyle().Faint(true).Foreground(muteC).Render(" for " + agent.name))
+		b.WriteString("\n\n")
+		models := m.models[m.sidebarProv]
+		if len(models) > 0 {
+			for i, mn := range models {
+				sel := "  "
+				color := lipgloss.Color("#E6E6E6")
+				if i == m.sidebarCur {
+					sel = "▸ "
+					color = accentC
+				}
+				line := fmt.Sprintf("%s%s", sel, mn)
+				if len(line) > dw {
+					line = line[:dw]
+				}
+				b.WriteString(lipgloss.NewStyle().Foreground(color).Render(line))
+				b.WriteString("\n")
+			}
+		} else {
+			b.WriteString(lipgloss.NewStyle().Foreground(muteC).Render("  No models loaded"))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+		b.WriteString(lipgloss.NewStyle().Faint(true).Foreground(muteC).Render("↑↓ Enter Esc"))
+	}
+
+	return lipgloss.Place(w, h,
+		lipgloss.Center, lipgloss.Center,
+		style.Render(b.String()),
+		lipgloss.WithWhitespaceBackground(bg),
+	)
+}
+
 func (m model) sideView() string {
 	var b strings.Builder
 
@@ -871,18 +1057,18 @@ func (m model) sideView() string {
 	if len(m.agents) == 0 {
 		pad(lipgloss.NewStyle().Foreground(muteC).Render("  (none configured)"))
 	} else {
-		for _, a := range m.agents {
-			dot := lipgloss.NewStyle().Foreground(greenC).Render("●")
+		for i, a := range m.agents {
 			pName := a.provider
-			if pName == "" {
+			if pName == "" || a.model == "" {
 				pName = "no key"
-				dot = lipgloss.NewStyle().Foreground(muteC).Render("○")
 			}
-			if a.model == "" {
-				pName = "no key"
-				dot = lipgloss.NewStyle().Foreground(muteC).Render("○")
+			prefix := "  "
+			if m.sidebarConfig && m.sidebarStep == 0 && i == m.sidebarSel {
+				prefix = lipgloss.NewStyle().Foreground(accentC).Render("▸ ")
+			} else {
+				prefix = "  "
 			}
-			pad(fmt.Sprintf(" %s %s", dot, a.name))
+			pad(fmt.Sprintf("%s%s", prefix, a.name))
 			pad(lipgloss.NewStyle().Foreground(muteC).Width(18).Render(fmt.Sprintf("    %s", pName)))
 		}
 	}
@@ -890,6 +1076,11 @@ func (m model) sideView() string {
 	pad("")
 	pad(lipgloss.NewStyle().Faint(true).Render(" KEYS"))
 	pad(lipgloss.NewStyle().Foreground(blueC).Render(" Ctrl+S Setup"))
+	if m.sidebarConfig {
+		pad(lipgloss.NewStyle().Foreground(greenC).Render(" ● Config active"))
+	} else {
+		pad(lipgloss.NewStyle().Foreground(muteC).Render(" Ctrl+E Config"))
+	}
 	pad(lipgloss.NewStyle().Foreground(muteC).Render(" Ctrl+B Sidebar"))
 
 	contentLines := strings.Count(b.String(), "\n")
