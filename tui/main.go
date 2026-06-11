@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +26,13 @@ var (
 	dialogBg = lipgloss.Color("#1a1a2e")
 	tabBg   = lipgloss.Color("#0f0f1a")
 )
+
+var agentColors = []lipgloss.Color{
+	lipgloss.Color("#00CED1"), lipgloss.Color("#5B8DEF"),
+	lipgloss.Color("#4CCD6B"), lipgloss.Color("#E6C06C"),
+	lipgloss.Color("#C678DD"), lipgloss.Color("#E06C75"),
+	lipgloss.Color("#56B6C2"), lipgloss.Color("#D19A66"),
+}
 
 type provider struct{ id, label string }
 
@@ -112,6 +120,16 @@ type fetchModelsMsg struct {
 	err      error
 }
 
+type chatRespMsg struct {
+	agentName string
+	content   string
+	provider  string
+}
+
+type chatErrMsg struct {
+	content string
+}
+
 func initialModel() model {
 	apiKeys, agents := loadConfig()
 	return model{
@@ -189,7 +207,7 @@ func fetchModelsCmd(id, key string) tea.Cmd {
 			if len(short) > 40 {
 				short = short[:40] + "…"
 			}
-			return fetchModelsMsg{provider: id, err: fmt.Errorf(short)}
+			return fetchModelsMsg{provider: id, err: errors.New(short)}
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode >= 400 {
@@ -205,7 +223,7 @@ func fetchModelsCmd(id, key string) tea.Cmd {
 			} else {
 				short += " Error"
 			}
-			return fetchModelsMsg{provider: id, err: fmt.Errorf(short)}
+			return fetchModelsMsg{provider: id, err: errors.New(short)}
 		}
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -238,6 +256,189 @@ func fetchModelsCmd(id, key string) tea.Cmd {
 	}
 }
 
+func sendChatCmd(m model) tea.Cmd {
+	// find first enabled agent with provider, model, and API key
+	var agent agentCfg
+	found := false
+	for _, a := range m.agents {
+		if a.enabled && a.provider != "" && a.model != "" && m.apiKeys[a.provider] != "" {
+			agent = a
+			found = true
+			break
+		}
+	}
+	if !found {
+		return func() tea.Msg {
+			return chatErrMsg{content: "No enabled agent with valid provider/model/API key"}
+		}
+	}
+
+	base := baseURLs[agent.provider]
+	key := m.apiKeys[agent.provider]
+
+	// build messages array for API
+	type chatMsg struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	var apiMsgs []chatMsg
+	for _, msg := range m.messages {
+		switch msg.Kind {
+		case MsgUser:
+			if strings.TrimSpace(msg.Content) != "" {
+				apiMsgs = append(apiMsgs, chatMsg{Role: "user", Content: msg.Content})
+			}
+		case MsgAgent:
+			if strings.TrimSpace(msg.Content) != "" {
+				apiMsgs = append(apiMsgs, chatMsg{Role: "assistant", Content: msg.Content})
+			}
+		case MsgSystem:
+			if strings.TrimSpace(msg.Content) != "" {
+				apiMsgs = append(apiMsgs, chatMsg{Role: "system", Content: msg.Content})
+			}
+		}
+	}
+
+	return func() tea.Msg {
+		client := &http.Client{Timeout: 120 * time.Second}
+
+		var reqBody []byte
+		var req *http.Request
+		var err error
+
+		if agent.provider == "anthropic" {
+			type anthropicReq struct {
+				Model     string    `json:"model"`
+				Messages  []chatMsg `json:"messages"`
+				MaxTokens int       `json:"max_tokens"`
+			}
+			reqBody, _ = json.Marshal(anthropicReq{
+				Model:     agent.model,
+				Messages:  apiMsgs,
+				MaxTokens: 4096,
+			})
+			req, err = http.NewRequest("POST", base+"/v1/messages", strings.NewReader(string(reqBody)))
+			if err != nil {
+				return chatErrMsg{content: err.Error()}
+			}
+			req.Header.Set("x-api-key", key)
+			req.Header.Set("anthropic-version", "2023-06-01")
+			req.Header.Set("Content-Type", "application/json")
+		} else if agent.provider == "gemini" {
+			type geminiPart struct {
+				Text string `json:"text"`
+			}
+			type geminiContent struct {
+				Parts []geminiPart `json:"parts"`
+			}
+			type geminiReq struct {
+				Contents []geminiContent `json:"contents"`
+			}
+			var geminiMsgs []geminiContent
+			for _, m := range apiMsgs {
+				if strings.TrimSpace(m.Content) != "" {
+					geminiMsgs = append(geminiMsgs, geminiContent{Parts: []geminiPart{{Text: m.Content}}})
+				}
+			}
+			reqBody, _ = json.Marshal(geminiReq{Contents: geminiMsgs})
+			url := fmt.Sprintf("%s/v1/models/%s:generateContent?key=%s", base, agent.model, key)
+			req, err = http.NewRequest("POST", url, strings.NewReader(string(reqBody)))
+			if err != nil {
+				return chatErrMsg{content: err.Error()}
+			}
+			req.Header.Set("Content-Type", "application/json")
+		} else {
+			// OpenAI-compatible
+			type openAIReq struct {
+				Model    string    `json:"model"`
+				Messages []chatMsg `json:"messages"`
+			}
+			reqBody, _ = json.Marshal(openAIReq{Model: agent.model, Messages: apiMsgs})
+			req, err = http.NewRequest("POST", base+"/v1/chat/completions", strings.NewReader(string(reqBody)))
+			if err != nil {
+				return chatErrMsg{content: err.Error()}
+			}
+			req.Header.Set("Authorization", "Bearer "+key)
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return chatErrMsg{content: err.Error()}
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return chatErrMsg{content: err.Error()}
+		}
+
+		if resp.StatusCode >= 400 {
+			short := fmt.Sprintf("HTTP %d", resp.StatusCode)
+			if resp.StatusCode == 401 {
+				short += " Invalid API key"
+			} else if resp.StatusCode == 429 {
+				short += " Rate limited"
+			} else if resp.StatusCode >= 500 {
+				short += " Server error"
+			} else {
+				short += " Error"
+			}
+			return chatErrMsg{content: short}
+		}
+
+		if agent.provider == "anthropic" {
+			var anthropicResp struct {
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			}
+			if err := json.Unmarshal(body, &anthropicResp); err != nil {
+				return chatErrMsg{content: "Failed to parse Anthropic response"}
+			}
+			if len(anthropicResp.Content) > 0 {
+				return chatRespMsg{agentName: agent.name, content: anthropicResp.Content[0].Text, provider: agent.provider}
+			}
+			return chatErrMsg{content: "Empty Anthropic response"}
+		}
+
+		if agent.provider == "gemini" {
+			var geminiResp struct {
+				Candidates []struct {
+					Content struct {
+						Parts []struct {
+							Text string `json:"text"`
+						} `json:"parts"`
+					} `json:"content"`
+				} `json:"candidates"`
+			}
+			if err := json.Unmarshal(body, &geminiResp); err != nil {
+				return chatErrMsg{content: "Failed to parse Gemini response"}
+			}
+			if len(geminiResp.Candidates) > 0 && len(geminiResp.Candidates[0].Content.Parts) > 0 {
+				return chatRespMsg{agentName: agent.name, content: geminiResp.Candidates[0].Content.Parts[0].Text, provider: agent.provider}
+			}
+			return chatErrMsg{content: "Empty Gemini response"}
+		}
+
+		// OpenAI-compatible response
+		var openAIResp struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal(body, &openAIResp); err != nil {
+			return chatErrMsg{content: "Failed to parse response"}
+		}
+		if len(openAIResp.Choices) > 0 {
+			return chatRespMsg{agentName: agent.name, content: openAIResp.Choices[0].Message.Content, provider: agent.provider}
+		}
+		return chatErrMsg{content: "Empty response"}
+	}
+}
+
 func (m model) Init() tea.Cmd {
 	var cmds []tea.Cmd
 	for id, key := range m.apiKeys {
@@ -264,6 +465,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			delete(m.modelErrors, msg.provider)
 			m.models[msg.provider] = msg.models
 		}
+		return m, nil
+
+	case chatRespMsg:
+		m.isRunning = false
+		m.phase = ""
+		clr := lipgloss.Color("#00CED1")
+		for i, a := range m.agents {
+			if a.name == msg.agentName {
+				clr = agentColors[i%len(agentColors)]
+				break
+			}
+		}
+		m.messages = append(m.messages, Message{Kind: MsgAgent, AgentName: msg.agentName, Content: msg.content, Color: clr})
+		m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
+		return m, nil
+
+	case chatErrMsg:
+		m.isRunning = false
+		m.phase = ""
+		m.messages = append(m.messages, Message{Kind: MsgError, Content: msg.content})
+		m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
 		return m, nil
 
 	case tea.KeyMsg:
@@ -306,10 +528,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "down", "left", "right":
 			return m, nil
 		case "enter":
+			if m.isRunning {
+				return m, nil
+			}
 			if t := strings.TrimSpace(m.input); t != "" {
 				m.messages = append(m.messages, Message{Kind: MsgUser, Content: t})
-				m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
 				m.input = ""
+				m.isRunning = true
+				m.phase = "waiting"
+				return m, sendChatCmd(m)
 			}
 			return m, nil
 		case "backspace":
@@ -728,9 +955,14 @@ func (m model) View() string {
 
 	inpWidth := mw - 4
 	cursor := lipgloss.NewStyle().Background(lipgloss.Color("#E6E6E6")).Render(" ")
-	inpContent := lipgloss.NewStyle().Bold(true).Foreground(accentC).Render("λ ") +
-		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E6E6E6")).Render(m.input) +
-		cursor
+	var inpContent string
+	if m.isRunning {
+		inpContent = lipgloss.NewStyle().Bold(true).Foreground(blueC).Render("◆ Waiting for response…")
+	} else {
+		inpContent = lipgloss.NewStyle().Bold(true).Foreground(accentC).Render("λ ") +
+			lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E6E6E6")).Render(m.input) +
+			cursor
+	}
 	inp := lipgloss.NewStyle().
 		Background(bg).
 		BorderStyle(lipgloss.NormalBorder()).
