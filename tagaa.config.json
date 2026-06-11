@@ -1,0 +1,126 @@
+{
+  "agents": [
+    {
+      "name": "Sonnet",
+      "provider": "anthropic",
+      "model": "claude-3-5-sonnet-20241022",
+      "specialty": "Architecture, Planning",
+      "color": "cyan",
+      "enabled": true
+    },
+    {
+      "name": "Opus",
+      "provider": "anthropic",
+      "model": "claude-3-opus-20240229",
+      "specialty": "Deep Reasoning, Review",
+      "color": "blue",
+      "enabled": true
+    },
+    {
+      "name": "Haiku",
+      "provider": "anthropic",
+      "model": "claude-3-haiku-20240307",
+      "specialty": "Speed, Summarization",
+      "color": "green",
+      "enabled": true
+    },
+    {
+      "name": "GPT4o",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "specialty": "General, Code Gen",
+      "color": "yellow",
+      "enabled": true
+    },
+    {
+      "name": "o3",
+      "provider": "openai",
+      "model": "o3-mini",
+      "specialty": "Logical Reasoning",
+      "color": "orange",
+      "enabled": true
+    },
+    {
+      "name": "Gemini",
+      "provider": "google",
+      "model": "gemini-2.5-pro",
+      "specialty": "Research, Multimodal",
+      "color": "magenta",
+      "enabled": true
+    },
+    {
+      "name": "Mistral",
+      "provider": "mistral",
+      "model": "mistral-large-latest",
+      "specialty": "Concise Answers, Speed",
+      "color": "white",
+      "enabled": true
+    },
+    {
+      "name": "DeepSeek",
+      "provider": "deepseek",
+      "model": "deepseek-coder",
+      "specialty": "Low-level Code, DSA",
+      "color": "red",
+      "enabled": true,
+      "base_url": "https://api.deepseek.com/v1"
+    },
+    {
+      "name": "Grok",
+      "provider": "xai",
+      "model": "grok-3",
+      "specialty": "Creativity, Brainstorm",
+      "color": "purple",
+      "enabled": true,
+      "base_url": "https://api.x.ai/v1"
+    },
+    {
+      "name": "Nemotron",
+      "provider": "nvidia",
+      "model": "nvidia/nemotron-4-340b-instruct",
+      "specialty": "Reasoning, Code Gen",
+      "color": "magenta",
+      "enabled": true,
+      "base_url": "https://integrate.api.nvidia.com/v1"
+    }
+  ],
+  "api_keys": {
+    "anthropic": "${ANTHROPIC_API_KEY}",
+    "openai": "${OPENAI_API_KEY}",
+    "google": "${GOOGLE_API_KEY}",
+    "mistral": "${MISTRAL_API_KEY}",
+    "deepseek": "${DEEPSEEK_API_KEY}",
+    "xai": "${XAI_API_KEY}",
+    "nvidia": "${NVIDIA_API_KEY}"
+  },
+  "voting": {
+    "weights": {
+      "correctness": 0.35,
+      "safety": 0.25,
+      "completeness": 0.25,
+      "simplicity": 0.15
+    },
+    "confidence_threshold": 6.0,
+    "tie_margin": 0.5,
+    "self_nomination_penalty": 0.10
+  },
+  "execution": {
+    "max_fix_cycles": 3,
+    "test_command": "npm test",
+    "allowed_tools": ["read_file", "write_file", "edit_file", "run_command", "run_tests", "search_codebase", "fetch_url"],
+    "working_directory": "."
+  },
+  "features": {
+    "cross_examination_round": true,
+    "post_execution_peer_review": true,
+    "dissent_acknowledgment": true,
+    "session_logging": true,
+    "fast_mode": false
+  },
+  "ui": {
+    "message_width": 80,
+    "show_timestamps": true,
+    "show_specialty_tags": true,
+    "syntax_highlighting": true
+  }
+}

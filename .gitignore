@@ -1,0 +1,7 @@
+node_modules/
+dist/
+sessions/
+.opencode/
+*.exe
+*.exe~
+.DS_Store
