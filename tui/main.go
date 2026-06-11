@@ -56,13 +56,35 @@ type agentCfg struct {
 	enabled  bool
 }
 
+type MsgKind int
+
+const (
+	MsgUser   MsgKind = iota
+	MsgAgent
+	MsgSystem
+	MsgError
+	MsgSuccess
+	MsgVote
+)
+
+type Message struct {
+	Kind      MsgKind
+	AgentName string
+	Color     lipgloss.Color
+	Content   string
+}
+
 type model struct {
 	agents        []agentCfg
-	messages      []string
+	messages      []Message
 	input         string
 	apiKeys       map[string]string
 	models        map[string][]string
 	modelsLoading map[string]bool
+	modelErrors   map[string]string
+	phase         string
+	isRunning     bool
+	scrollOffset  int
 	sidebar       bool
 	settings      bool
 	settingsTab   int
@@ -88,15 +110,16 @@ type fetchModelsMsg struct {
 func initialModel() model {
 	return model{
 		agents:        []agentCfg{},
-		messages: []string{
-			"  ◆ TAGAA v0.1.0 — Terminal Autonomous Group AI Assistant",
-			"  ◆ No agents yet. Press Ctrl+S to add agents and configure API keys",
-			"    Ctrl+B toggle sidebar",
-			"",
+		messages: []Message{
+			{Kind: MsgSystem, Content: "◆ TAGAA v0.1.0 — Terminal Autonomous Group AI Assistant"},
+			{Kind: MsgSystem, Content: "◆ No agents yet. Press Ctrl+S to add agents and configure API keys"},
+			{Kind: MsgSystem, Content: "  Ctrl+B toggle sidebar"},
+			{Kind: MsgSystem, Content: ""},
 		},
 		apiKeys:       make(map[string]string),
 		models:        make(map[string][]string),
 		modelsLoading: make(map[string]bool),
+		modelErrors:   make(map[string]string),
 		sidebar:       true,
 	}
 }
@@ -128,6 +151,11 @@ func fetchModelsCmd(id, key string) tea.Cmd {
 			return fetchModelsMsg{provider: id, err: err}
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			body, _ := io.ReadAll(resp.Body)
+			msg := fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+			return fetchModelsMsg{provider: id, err: fmt.Errorf(msg)}
+		}
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return fetchModelsMsg{provider: id, err: err}
@@ -169,12 +197,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case fetchModelsMsg:
+		m.modelsLoading[msg.provider] = false
 		if msg.err != nil {
+			m.modelErrors[msg.provider] = msg.err.Error()
 			m.models[msg.provider] = nil
 		} else {
+			delete(m.modelErrors, msg.provider)
 			m.models[msg.provider] = msg.models
 		}
-		m.modelsLoading[msg.provider] = false
 		return m, nil
 
 	case tea.KeyMsg:
@@ -197,12 +227,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.agentCur = 0
 			m.agentEdit = false
 			return m, nil
+		case "ctrl+up":
+			m.scrollOffset++
+			return m, nil
+		case "ctrl+down":
+			if m.scrollOffset > 0 {
+				m.scrollOffset--
+			}
+			return m, nil
 		case "up", "down", "left", "right":
 			return m, nil
 		case "enter":
 			if t := strings.TrimSpace(m.input); t != "" {
-				m.messages = append(m.messages, "  You: "+t)
-				m.messages = append(m.messages, "")
+				m.messages = append(m.messages, Message{Kind: MsgUser, Content: t})
+				m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
 				m.input = ""
 			}
 			return m, nil
@@ -246,15 +284,13 @@ func (m model) updKeysTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "escape":
 			m.modeSelect = false
 		case "enter":
-			if m.selModel != "" {
-				m.models[providers[m.setCur].id] = models
-			}
 			m.modeSelect = false
 		case "up":
 			idx := -1
 			for i, n := range models {
 				if n == m.selModel {
-					idx = i; break
+					idx = i
+					break
 				}
 			}
 			if idx > 0 {
@@ -264,7 +300,8 @@ func (m model) updKeysTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			idx := -1
 			for i, n := range models {
 				if n == m.selModel {
-					idx = i; break
+					idx = i
+					break
 				}
 			}
 			if idx < len(models)-1 {
@@ -284,6 +321,7 @@ func (m model) updKeysTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setKey = ""
 			if key != "" {
 				m.modelsLoading[id] = true
+				delete(m.modelErrors, id)
 				return m, fetchModelsCmd(id, key)
 			}
 			return m, nil
@@ -333,10 +371,9 @@ func (m model) updKeysTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// if editing an agent field
 	if m.agentEdit {
 		switch m.agentField {
-		case 0: // editing name
+		case 0:
 			switch msg.String() {
 			case "enter":
 				if strings.TrimSpace(m.agentTemp) != "" {
@@ -356,7 +393,7 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.agentTemp += s
 				}
 			}
-		case 1: // editing provider
+		case 1:
 			switch msg.String() {
 			case "enter":
 				if m.agentTemp != "" {
@@ -365,10 +402,6 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				m.agentField = 2
 				m.agentTemp = m.agents[m.agentCur].model
-				// skip model step if no provider set
-				if m.agentTemp == "" {
-					m.agentEdit = false
-				}
 			case "escape":
 				m.agentEdit = false
 			case "up":
@@ -376,10 +409,6 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				for i, p := range providers {
 					if p.id == m.agentTemp && i > 0 {
 						idx = i - 1
-						break
-					}
-					if p.id == m.agentTemp {
-						idx = len(providers) - 1
 						break
 					}
 				}
@@ -394,7 +423,7 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				m.agentTemp = providers[idx].id
 			}
-		case 2: // editing model
+		case 2:
 			models := m.models[m.agents[m.agentCur].provider]
 			switch msg.String() {
 			case "enter":
@@ -415,7 +444,8 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				idx := -1
 				for i, n := range models {
 					if n == m.agentTemp {
-						idx = i; break
+						idx = i
+						break
 					}
 				}
 				if idx <= 0 {
@@ -434,7 +464,8 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				idx := -1
 				for i, n := range models {
 					if n == m.agentTemp {
-						idx = i; break
+						idx = i
+						break
 					}
 				}
 				if idx < 0 || idx >= len(models)-1 {
@@ -458,15 +489,15 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "a":
 		m.agents = append(m.agents, agentCfg{
-			name: fmt.Sprintf("Agent %d", len(m.agents)+1),
+			name:    fmt.Sprintf("Agent %d", len(m.agents)+1),
 			enabled: true,
 		})
 		m.agentCur = len(m.agents) - 1
 	case "d":
-			m.agents = append(m.agents[:m.agentCur], m.agents[m.agentCur+1:]...)
-			if m.agentCur >= len(m.agents) {
-				m.agentCur = len(m.agents) - 1
-			}
+		m.agents = append(m.agents[:m.agentCur], m.agents[m.agentCur+1:]...)
+		if m.agentCur >= len(m.agents) {
+			m.agentCur = len(m.agents) - 1
+		}
 	case "up":
 		if m.agentCur > 0 {
 			m.agentCur--
@@ -477,6 +508,42 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func renderMessage(msg Message, width int) string {
+	switch msg.Kind {
+	case MsgUser:
+		return lipgloss.NewStyle().Bold(true).Foreground(accentC).Render("  You: ") +
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#E6E6E6")).Render(msg.Content)
+
+	case MsgAgent:
+		badge := lipgloss.NewStyle().Foreground(msg.Color).Bold(true).Render("◆ " + msg.AgentName)
+		body := lipgloss.NewStyle().PaddingLeft(5).Width(width - 2).Render(msg.Content)
+		return badge + "\n" + body
+
+	case MsgSystem:
+		return lipgloss.NewStyle().Foreground(muteC).Render("  " + msg.Content)
+
+	case MsgError:
+		return lipgloss.NewStyle().Foreground(redC).Render("  ✗ " + msg.Content)
+
+	case MsgSuccess:
+		return lipgloss.NewStyle().Foreground(greenC).Render("  ✓ " + msg.Content)
+
+	case MsgVote:
+		return lipgloss.NewStyle().
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(blueC).
+			PaddingLeft(1).
+			Width(width - 2).
+			Render(
+				lipgloss.NewStyle().Bold(true).Foreground(blueC).Render("VOTE RESULT") + "\n" +
+					msg.Content,
+			)
+
+	default:
+		return "  " + msg.Content
+	}
 }
 
 func (m model) View() string {
@@ -493,6 +560,19 @@ func (m model) View() string {
 		mw = 10
 	}
 
+	phaseStr := ""
+	if m.phase != "" {
+		phaseStr = lipgloss.NewStyle().Foreground(blueC).Render(" [" + m.phase + "]")
+		if m.isRunning {
+			phaseStr = lipgloss.NewStyle().Foreground(greenC).Render(" [" + m.phase + " ◆]")
+		}
+	} else {
+		phaseStr = lipgloss.NewStyle().Faint(true).Foreground(muteC).Render(" [idle]")
+	}
+	if m.scrollOffset > 0 {
+		phaseStr += lipgloss.NewStyle().Foreground(muteC).Render(fmt.Sprintf(" ↑%d", m.scrollOffset))
+	}
+
 	hdr := lipgloss.NewStyle().
 		Background(bg).
 		BorderStyle(lipgloss.NormalBorder()).
@@ -500,16 +580,16 @@ func (m model) View() string {
 		Width(mw - 2).
 		PaddingLeft(1).
 		Render(lipgloss.NewStyle().Background(bg).Render(
-			lipgloss.NewStyle().Bold(true).Foreground(accentC).Render(" TAGAA  ") +
-				lipgloss.NewStyle().Faint(true).Render("Terminal Autonomous Group AI Assistant  ") +
-				lipgloss.NewStyle().Faint(true).Render("v0.1.0"),
+			lipgloss.NewStyle().Bold(true).Foreground(accentC).Render(" TAGAA") +
+				phaseStr +
+				lipgloss.NewStyle().Faint(true).Render("  v0.1.0"),
 		))
 
 	inpWidth := mw - 4
-	inpContent := lipgloss.NewStyle().Background(bg).Render(
-		lipgloss.NewStyle().Bold(true).Foreground(accentC).Render("λ ") +
-			lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E6E6E6")).Render(m.input),
-	)
+	cursor := lipgloss.NewStyle().Background(lipgloss.Color("#E6E6E6")).Render(" ")
+	inpContent := lipgloss.NewStyle().Bold(true).Foreground(accentC).Render("λ ") +
+		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E6E6E6")).Render(m.input) +
+		cursor
 	inp := lipgloss.NewStyle().
 		Background(bg).
 		BorderStyle(lipgloss.NormalBorder()).
@@ -538,17 +618,24 @@ func (m model) View() string {
 		return mainCol
 	}
 
-	var body strings.Builder
+	total := len(m.messages) - m.scrollOffset
 	start := 0
-	if len(m.messages) > msgH {
-		start = len(m.messages) - msgH
+	if total > msgH {
+		start = total - msgH
 	}
-	for i := start; i < len(m.messages); i++ {
-		line := m.messages[i]
-		line += strings.Repeat(" ", max(0, msgW-len(line)))
-		body.WriteString(line + "\n")
+	if start < 0 {
+		start = 0
 	}
-	extra := msgH - (len(m.messages) - start)
+
+	var body strings.Builder
+	for i := start; i < len(m.messages)-m.scrollOffset; i++ {
+		rendered := renderMessage(m.messages[i], msgW)
+		body.WriteString(rendered)
+		body.WriteString("\n")
+	}
+
+	lines := strings.Count(body.String(), "\n")
+	extra := msgH - lines
 	for range extra {
 		body.WriteString(strings.Repeat(" ", msgW) + "\n")
 	}
@@ -593,8 +680,6 @@ func (m model) keysView(msgW, msgH int) string {
 		Width(dw).
 		Background(dialogBg)
 
-	cw := dw - 2
-
 	var b strings.Builder
 	b.WriteString(m.tabBar())
 	b.WriteString("\n\n")
@@ -611,15 +696,20 @@ func (m model) keysView(msgW, msgH int) string {
 
 		key := m.apiKeys[p.id]
 		status := "○ empty"
-		if key != "" {
-			masked := strings.Repeat("●", max(1, len(key)))
-			if len(masked) > 12 {
-				masked = masked[:12]
+
+		if m.setEdit && i == m.setCur {
+			masked := strings.Repeat("●", len(m.setKey))
+			if masked == "" {
+				masked = "▋"
 			}
 			status = masked
-		}
-		if m.modelsLoading[p.id] {
+		} else if m.modelsLoading[p.id] {
 			status = "⟳ loading"
+		} else if errMsg, ok := m.modelErrors[p.id]; ok {
+			status = lipgloss.NewStyle().Foreground(redC).Render("✗ " + errMsg)
+		} else if key != "" {
+			masked := strings.Repeat("●", max(1, min(len(key), 12)))
+			status = masked
 		}
 
 		b.WriteString(lipgloss.NewStyle().Foreground(color).Render(
@@ -640,14 +730,17 @@ func (m model) keysView(msgW, msgH int) string {
 						}
 					}
 					line := fmt.Sprintf("   %s%s", sel, mn)
-					if len(line) > cw {
-						line = line[:cw]
+					if len(line) > dw-4 {
+						line = line[:dw-4]
 					}
 					b.WriteString(lipgloss.NewStyle().Foreground(modColor).Render(line))
 					b.WriteString("\n")
 				}
 			} else if m.modelsLoading[p.id] {
 				b.WriteString(lipgloss.NewStyle().Foreground(muteC).Render("   ⟳ Fetching models..."))
+				b.WriteString("\n")
+			} else if _, ok := m.modelErrors[p.id]; ok {
+				b.WriteString(lipgloss.NewStyle().Foreground(redC).Render("   ✗ API key rejected or unreachable"))
 				b.WriteString("\n")
 			} else if key != "" {
 				b.WriteString(lipgloss.NewStyle().Foreground(muteC).Render("   Press Enter to fetch models"))
@@ -691,7 +784,6 @@ func (m model) agentsView(msgW, msgH int) string {
 	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(blueC).Render("Agent Configuration"))
 	b.WriteString("\n\n")
 
-	// header
 	if len(m.agents) > 0 {
 		hdr := lipgloss.NewStyle().Faint(true).Foreground(muteC).Render(
 			fmt.Sprintf("%-16s %-14s %s", "Name", "Provider", "Model"),
@@ -720,7 +812,6 @@ func (m model) agentsView(msgW, msgH int) string {
 			mod = "(none)"
 		}
 
-		// if editing this agent
 		if m.agentEdit && i == m.agentCur {
 			switch m.agentField {
 			case 0:
@@ -748,10 +839,8 @@ func (m model) agentsView(msgW, msgH int) string {
 		}
 		b.WriteString("\n")
 
-		// show provider's models below if editing provider/model
 		if m.agentEdit && i == m.agentCur {
 			if m.agentField == 1 {
-				// show provider list
 				for _, pp := range providers {
 					sel := "  "
 					pc := muteC
@@ -817,24 +906,37 @@ func (m model) sideView() string {
 	}
 	pad(lipgloss.NewStyle().Bold(true).Foreground(accentC).Render(" TAGAA"))
 	pad("")
+
 	pad(lipgloss.NewStyle().Faint(true).Render(" STATUS"))
-	pad(fmt.Sprintf(" %s Idle",
-		lipgloss.NewStyle().Foreground(greenC).Render("●"),
-	))
+	statusDot := lipgloss.NewStyle().Foreground(muteC).Render("○")
+	statusText := "Idle"
+	if m.isRunning {
+		statusDot = lipgloss.NewStyle().Foreground(greenC).Render("●")
+		statusText = m.phase
+	}
+	pad(fmt.Sprintf(" %s %s", statusDot, statusText))
+
 	pad("")
 	pad(lipgloss.NewStyle().Faint(true).Render(" AGENTS"))
 	if len(m.agents) == 0 {
 		pad(lipgloss.NewStyle().Foreground(muteC).Render("  (none configured)"))
 	} else {
 		for _, a := range m.agents {
-			mod := a.model
-			if mod == "" {
-				mod = "(no model)"
+			dot := lipgloss.NewStyle().Foreground(greenC).Render("●")
+			pName := a.provider
+			if pName == "" {
+				pName = "no key"
+				dot = lipgloss.NewStyle().Foreground(muteC).Render("○")
 			}
-			pad(fmt.Sprintf("  %s", a.name))
-			pad(lipgloss.NewStyle().Foreground(muteC).Width(18).Render(fmt.Sprintf("    %s", mod)))
+			if a.model == "" {
+				pName = "no key"
+				dot = lipgloss.NewStyle().Foreground(muteC).Render("○")
+			}
+			pad(fmt.Sprintf(" %s %s", dot, a.name))
+			pad(lipgloss.NewStyle().Foreground(muteC).Width(18).Render(fmt.Sprintf("    %s", pName)))
 		}
 	}
+
 	pad("")
 	pad(lipgloss.NewStyle().Faint(true).Render(" KEYS"))
 	pad(lipgloss.NewStyle().Foreground(blueC).Render(" Ctrl+S Setup"))
