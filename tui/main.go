@@ -494,6 +494,9 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		})
 		m.agentCur = len(m.agents) - 1
 	case "d":
+		if len(m.agents) == 0 {
+			return m, nil
+		}
 		m.agents = append(m.agents[:m.agentCur], m.agents[m.agentCur+1:]...)
 		if m.agentCur >= len(m.agents) {
 			m.agentCur = len(m.agents) - 1
