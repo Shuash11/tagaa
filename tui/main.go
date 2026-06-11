@@ -277,7 +277,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) updSidebarConfig(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "escape":
+	case "esc":
 		m.sidebarConfig = false
 		return m, nil
 	case "up":
@@ -399,7 +399,7 @@ func (m model) updKeysTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, fetchModelsCmd(id, key)
 			}
 			return m, nil
-		case "escape":
+		case "esc":
 			m.setEdit = false
 			m.setKey = ""
 			return m, nil
@@ -420,7 +420,7 @@ func (m model) updKeysTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "escape":
+	case "esc":
 		m.settings = false
 	case "enter":
 		m.setEdit = true
@@ -448,7 +448,7 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				m.agentField = 1
 				m.agentTemp = m.agents[m.agentCur].provider
-			case "escape":
+			case "esc":
 				m.agentEdit = false
 			case "backspace":
 				if len(m.agentTemp) > 0 {
@@ -469,7 +469,7 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				m.agentField = 2
 				m.agentTemp = m.agents[m.agentCur].model
-			case "escape":
+			case "esc":
 				m.agentEdit = false
 			case "up":
 				idx := len(providers) - 1
@@ -498,7 +498,7 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.agents[m.agentCur].model = m.agentTemp
 				}
 				m.agentEdit = false
-			case "escape":
+			case "esc":
 				m.agentEdit = false
 			case "up":
 				if len(models) == 0 {
@@ -546,7 +546,7 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "escape":
+	case "esc":
 		m.settings = false
 	case "enter":
 		if m.agentCur >= 0 && m.agentCur < len(m.agents) {
