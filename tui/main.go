@@ -185,13 +185,27 @@ func fetchModelsCmd(id, key string) tea.Cmd {
 		}
 		resp, err := client.Do(req)
 		if err != nil {
-			return fetchModelsMsg{provider: id, err: err}
+			short := err.Error()
+			if len(short) > 40 {
+				short = short[:40] + "…"
+			}
+			return fetchModelsMsg{provider: id, err: fmt.Errorf(short)}
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode >= 400 {
-			body, _ := io.ReadAll(resp.Body)
-			msg := fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-			return fetchModelsMsg{provider: id, err: fmt.Errorf(msg)}
+			short := fmt.Sprintf("HTTP %d", resp.StatusCode)
+			if resp.StatusCode == 401 {
+				short += " Invalid API key"
+			} else if resp.StatusCode == 403 {
+				short += " Access denied"
+			} else if resp.StatusCode == 429 {
+				short += " Rate limited"
+			} else if resp.StatusCode >= 500 {
+				short += " Server error"
+			} else {
+				short += " Error"
+			}
+			return fetchModelsMsg{provider: id, err: fmt.Errorf(short)}
 		}
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
