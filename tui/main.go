@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -112,20 +113,52 @@ type fetchModelsMsg struct {
 }
 
 func initialModel() model {
+	apiKeys, agents := loadConfig()
 	return model{
-		agents:        []agentCfg{},
+		agents:        agents,
 		messages: []Message{
 			{Kind: MsgSystem, Content: "◆ TAGAA v0.1.0 — Terminal Autonomous Group AI Assistant"},
-			{Kind: MsgSystem, Content: "◆ No agents yet. Press Ctrl+S to add agents and configure API keys"},
-			{Kind: MsgSystem, Content: "  Ctrl+B toggle sidebar"},
+			{Kind: MsgSystem, Content: "◆ API keys and agents loaded from " + configFile},
+			{Kind: MsgSystem, Content: "  Ctrl+B toggle sidebar · Ctrl+S settings · Ctrl+E config"},
 			{Kind: MsgSystem, Content: ""},
 		},
-		apiKeys:       make(map[string]string),
+		apiKeys:       apiKeys,
 		models:        make(map[string][]string),
 		modelsLoading: make(map[string]bool),
 		modelErrors:   make(map[string]string),
 		sidebar:       true,
 	}
+}
+
+const configFile = "tagaa.config.json"
+
+type savedConfig struct {
+	APIKeys map[string]string `json:"api_keys"`
+	Agents  []agentCfg        `json:"agents"`
+}
+
+func saveConfig(m model) {
+	data := savedConfig{APIKeys: m.apiKeys, Agents: m.agents}
+	b, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return
+	}
+	os.WriteFile(configFile, b, 0644)
+}
+
+func loadConfig() (map[string]string, []agentCfg) {
+	b, err := os.ReadFile(configFile)
+	if err != nil {
+		return make(map[string]string), []agentCfg{}
+	}
+	var data savedConfig
+	if err := json.Unmarshal(b, &data); err != nil {
+		return make(map[string]string), []agentCfg{}
+	}
+	if data.APIKeys == nil {
+		data.APIKeys = make(map[string]string)
+	}
+	return data.APIKeys, data.Agents
 }
 
 func fetchModelsCmd(id, key string) tea.Cmd {
@@ -191,7 +224,15 @@ func fetchModelsCmd(id, key string) tea.Cmd {
 	}
 }
 
-func (m model) Init() tea.Cmd { return nil }
+func (m model) Init() tea.Cmd {
+	var cmds []tea.Cmd
+	for id, key := range m.apiKeys {
+		if key != "" {
+			cmds = append(cmds, fetchModelsCmd(id, key))
+		}
+	}
+	return tea.Batch(cmds...)
+}
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -349,6 +390,7 @@ func (m model) updSidebarConfig(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.sidebarProv = pid
 			m.agents[m.sidebarSel].provider = pid
 			m.agents[m.sidebarSel].model = ""
+			saveConfig(m)
 			models := m.models[pid]
 			if len(models) > 0 {
 				m.sidebarStep = 2
@@ -393,6 +435,7 @@ func (m model) updKeysTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.apiKeys[id] = key
 			m.setEdit = false
 			m.setKey = ""
+			saveConfig(m)
 			if key != "" {
 				m.modelsLoading[id] = true
 				delete(m.modelErrors, id)
@@ -448,6 +491,7 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				m.agentField = 1
 				m.agentTemp = m.agents[m.agentCur].provider
+				saveConfig(m)
 			case "esc":
 				m.agentEdit = false
 			case "backspace":
@@ -469,6 +513,7 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				m.agentField = 2
 				m.agentTemp = m.agents[m.agentCur].model
+				saveConfig(m)
 			case "esc":
 				m.agentEdit = false
 			case "up":
@@ -496,6 +541,7 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case "enter":
 				if m.agentTemp != "" {
 					m.agents[m.agentCur].model = m.agentTemp
+					saveConfig(m)
 				}
 				m.agentEdit = false
 			case "esc":
@@ -560,6 +606,7 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			enabled: true,
 		})
 		m.agentCur = len(m.agents) - 1
+		saveConfig(m)
 	case "d":
 		if len(m.agents) == 0 {
 			return m, nil
@@ -568,6 +615,7 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.agentCur >= len(m.agents) {
 			m.agentCur = len(m.agents) - 1
 		}
+		saveConfig(m)
 	case "up":
 		if m.agentCur > 0 {
 			m.agentCur--
