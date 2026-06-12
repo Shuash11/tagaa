@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"strings"
 )
 
 const configFile = "tagaa.config.json"
@@ -43,6 +44,19 @@ func loadConfig() (map[string]string, []agentCfg) {
 	for i := range data.Agents {
 		if data.Agents[i].Provider == "google" {
 			data.Agents[i].Provider = "gemini"
+		}
+	}
+
+	// resolve ${ENV_VAR} placeholders in API keys
+	for k, v := range data.APIKeys {
+		if strings.HasPrefix(v, "${") && strings.HasSuffix(v, "}") {
+			envName := v[2 : len(v)-1]
+			resolved := os.Getenv(envName)
+			if resolved != "" {
+				data.APIKeys[k] = resolved
+			} else {
+				data.APIKeys[k] = ""
+			}
 		}
 	}
 

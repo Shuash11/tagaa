@@ -152,9 +152,14 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 		Role    string `json:"role"`
 		Content string `json:"content"`
 	}
+	var systemParts []string
 	var apiMsgs []chatMsg
 	for _, msg := range m.messages {
 		switch msg.Kind {
+		case MsgSystem:
+			if strings.TrimSpace(msg.Content) != "" {
+				systemParts = append(systemParts, msg.Content)
+			}
 		case MsgUser:
 			if strings.TrimSpace(msg.Content) != "" {
 				apiMsgs = append(apiMsgs, chatMsg{Role: "user", Content: msg.Content})
@@ -163,11 +168,10 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 			if strings.TrimSpace(msg.Content) != "" {
 				apiMsgs = append(apiMsgs, chatMsg{Role: "assistant", Content: msg.Content})
 			}
-		case MsgSystem:
-			if strings.TrimSpace(msg.Content) != "" {
-				apiMsgs = append(apiMsgs, chatMsg{Role: "system", Content: msg.Content})
-			}
 		}
+	}
+	if len(systemParts) > 0 {
+		apiMsgs = append([]chatMsg{{Role: "system", Content: strings.Join(systemParts, "\n")}}, apiMsgs...)
 	}
 
 	return func() tea.Msg {
@@ -220,10 +224,11 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 			req.Header.Set("Content-Type", "application/json")
 		} else {
 			type openAIReq struct {
-				Model    string    `json:"model"`
-				Messages []chatMsg `json:"messages"`
+				Model     string    `json:"model"`
+				Messages  []chatMsg `json:"messages"`
+				MaxTokens int       `json:"max_tokens,omitempty"`
 			}
-			reqBody, _ = json.Marshal(openAIReq{Model: agent.Model, Messages: apiMsgs})
+			reqBody, _ = json.Marshal(openAIReq{Model: agent.Model, Messages: apiMsgs, MaxTokens: 4096})
 			req, err = http.NewRequestWithContext(ctx, "POST", base+"/v1/chat/completions", strings.NewReader(string(reqBody)))
 			if err != nil {
 				return chatErrMsg{content: err.Error()}
