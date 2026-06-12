@@ -15,11 +15,8 @@ func (m model) updSidebarConfig(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.sidebarSel--
 			}
 		} else if m.sidebarStep == 1 {
-			for i := m.sidebarCur - 1; i >= 0; i-- {
-				if m.apiKeys[providers[i].id] != "" {
-					m.sidebarCur = i
-					break
-				}
+			if m.sidebarCur > 0 {
+				m.sidebarCur--
 			}
 		} else if m.sidebarStep == 2 {
 			if m.sidebarCur > 0 {
@@ -33,11 +30,14 @@ func (m model) updSidebarConfig(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.sidebarSel++
 			}
 		} else if m.sidebarStep == 1 {
-			for i := m.sidebarCur + 1; i < len(providers); i++ {
-				if m.apiKeys[providers[i].id] != "" {
-					m.sidebarCur = i
-					break
+			filteredCount := 0
+			for _, p := range providers {
+				if m.apiKeys[p.id] != "" {
+					filteredCount++
 				}
+			}
+			if m.sidebarCur < filteredCount-1 {
+				m.sidebarCur++
 			}
 		} else if m.sidebarStep == 2 {
 			models := m.models[m.sidebarProv]
@@ -60,17 +60,22 @@ func (m model) updSidebarConfig(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.sidebarConfig = false
 				return m, nil
 			}
-			for i, p := range providers {
-				if m.apiKeys[p.id] != "" {
-					m.sidebarCur = i
-					break
-				}
-			}
 			m.sidebarStep = 1
 			m.sidebarProv = ""
 			return m, nil
 		} else if m.sidebarStep == 1 {
-			pid := providers[m.sidebarCur].id
+			filteredIdx := 0
+			var pid string
+			for _, p := range providers {
+				if m.apiKeys[p.id] == "" {
+					continue
+				}
+				if filteredIdx == m.sidebarCur {
+					pid = p.id
+					break
+				}
+				filteredIdx++
+			}
 			m.sidebarProv = pid
 			m.agents[m.sidebarSel].Provider = pid
 			m.agents[m.sidebarSel].Model = ""
