@@ -100,8 +100,27 @@ func sendChatCmd(m model) tea.Cmd {
 		}
 	}
 	if !found {
+		msg := "No ready agent:"
+		for _, a := range m.agents {
+			why := ""
+			if !a.enabled {
+				why = "disabled"
+			} else if a.provider == "" {
+				why = "no provider"
+			} else if a.model == "" {
+				why = "no model for " + a.provider
+			} else if m.apiKeys[a.provider] == "" {
+				why = "no API key for " + a.provider
+			} else {
+				why = "unknown"
+			}
+			msg += " [" + a.name + ": " + why + "]"
+		}
+		if len(msg) > 120 {
+			msg = msg[:117] + "..."
+		}
 		return func() tea.Msg {
-			return chatErrMsg{content: "No enabled agent with valid provider/model/API key"}
+			return chatErrMsg{content: msg}
 		}
 	}
 
