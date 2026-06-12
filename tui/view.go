@@ -55,7 +55,12 @@ func (m model) View() string {
 	inpWidth := mw - 4
 	cursor := lipgloss.NewStyle().Background(lipgloss.Color("#E6E6E6")).Render(" ")
 	var inpContent string
-	if m.isRunning {
+	if m.orchMode {
+		// orchestrator chat input area
+		inpContent = lipgloss.NewStyle().Bold(true).Foreground(accentC).Render("Orch> ") +
+			lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E6E6E6")).Render(m.orchInput) +
+			cursor
+	} else if m.isRunning {
 		phase := m.pipeline.ActivePhase()
 		if phase != "" {
 			inpContent = lipgloss.NewStyle().Bold(true).Foreground(blueC).Render("◆ " + phase + "…")
@@ -102,6 +107,30 @@ func (m model) View() string {
 		mainCol := lipgloss.JoinVertical(lipgloss.Top, hdr, msgs, inp)
 		if m.sidebar {
 			return lipgloss.JoinHorizontal(lipgloss.Top, mainCol, m.sideView())
+		}
+		return mainCol
+	}
+
+	// Orchestrator chat view
+	if m.orchMode {
+		// show orchMessages in main area
+		var allLines []string
+		for _, msg := range m.orchMessages {
+			r := m.renderMessage(msg, 0, msgW)
+			allLines = append(allLines, strings.Split(r, "\n")...)
+		}
+		// pad
+		for i := 0; i < msgH-len(allLines); i++ {
+			allLines = append(allLines, strings.Repeat(" ", msgW))
+		}
+		var body strings.Builder
+		for _, line := range allLines[:msgH] {
+			body.WriteString(line + "\n")
+		}
+		msgs := lipgloss.NewStyle().Background(bg).Width(msgW).Render(body.String())
+		mainCol := lipgloss.JoinVertical(lipgloss.Top, hdr, msgs, inp)
+		if m.sidebar {
+			return lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().Height(m.h).Width(mw).Render(mainCol), m.sideView())
 		}
 		return mainCol
 	}
