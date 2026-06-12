@@ -42,6 +42,7 @@ type model struct {
 	scrollOffset  int
 	sessionID     int
 	sessionTime   string
+	msgAgentIdx   int
 	sidebar       bool
 	sidebarConfig bool
 	sidebarSel    int

@@ -34,6 +34,7 @@ func initialModel() model {
 		models:        make(map[string][]string),
 		modelsLoading: make(map[string]bool),
 		modelErrors:   make(map[string]string),
+		msgAgentIdx:   -1,
 		sidebar:       true,
 	}
 }
@@ -69,6 +70,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chatRespMsg:
 		m.isRunning = false
 		m.phase = ""
+		m.scrollOffset = 0
 		clr := lipgloss.Color("#00CED1")
 		for i, a := range m.agents {
 			if a.Name == msg.agentName {
@@ -83,6 +85,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chatErrMsg:
 		m.isRunning = false
 		m.phase = ""
+		m.scrollOffset = 0
 		m.messages = append(m.messages, Message{Kind: MsgError, Content: msg.content})
 		m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
 		return m, nil
@@ -137,6 +140,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.isRunning = true
 				m.phase = "waiting"
 				m.scrollOffset = 0
+				if len(m.agents) > 0 {
+					m.msgAgentIdx = (m.msgAgentIdx + 1) % len(m.agents)
+				}
 				return m, sendChatCmd(m)
 			}
 			return m, nil
