@@ -283,7 +283,8 @@ func (m model) keysView(msgW, msgH int) string {
 		}
 
 		key := m.apiKeys[p.id]
-		status := "○ empty"
+		status := "— not configured"
+		statusStyle := lipgloss.NewStyle().Foreground(muteC)
 
 		if m.setEdit && i == m.setCur {
 			masked := strings.Repeat("●", len(m.setKey))
@@ -291,18 +292,25 @@ func (m model) keysView(msgW, msgH int) string {
 				masked = "▋"
 			}
 			status = masked
+			statusStyle = lipgloss.NewStyle()
 		} else if m.modelsLoading[p.id] {
 			status = "⟳ loading"
-		} else if errMsg, ok := m.modelErrors[p.id]; ok {
-			status = lipgloss.NewStyle().Foreground(redC).Render("✗ " + errMsg)
+			statusStyle = lipgloss.NewStyle()
+		} else if models, ok := m.models[p.id]; ok && len(models) > 0 {
+			status = fmt.Sprintf("✓ verified (%d models)", len(models))
+			statusStyle = lipgloss.NewStyle().Foreground(greenC)
+		} else if _, ok := m.modelErrors[p.id]; ok {
+			status = "✗ invalid"
+			statusStyle = lipgloss.NewStyle().Foreground(redC)
 		} else if key != "" {
-			masked := strings.Repeat("●", max(1, min(len(key), 12)))
-			status = masked
+			status = "○ unchecked"
+			statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#E6C06C"))
 		}
 
 		b.WriteString(lipgloss.NewStyle().Foreground(color).Render(
-			fmt.Sprintf("%s%-12s  %s", cursor, p.label, status),
+			fmt.Sprintf("%s%-12s  ", cursor, p.label),
 		))
+		b.WriteString(statusStyle.Render(status))
 		b.WriteString("\n")
 
 		if i == m.setCur && m.apiKeys[p.id] != "" && !m.setEdit {

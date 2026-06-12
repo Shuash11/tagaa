@@ -8,6 +8,21 @@ import (
 
 const configFile = "tagaa.config.json"
 
+var tokenCosts = map[string]struct{ input, output float64 }{
+	"claude-sonnet-4-20250514":   {3.00, 15.00},
+	"claude-3-5-sonnet-20241022": {3.00, 15.00},
+	"claude-3-haiku-20240307":    {0.25, 1.25},
+	"claude-opus-4-20250514":     {15.00, 75.00},
+	"gpt-4o":                     {2.50, 10.00},
+	"gpt-4o-mini":                {0.15, 0.60},
+	"gpt-4-turbo":                {10.00, 30.00},
+	"gemini-2.0-flash":           {0.10, 0.40},
+	"gemini-1.5-pro":             {1.25, 5.00},
+	"mistral-large-latest":       {2.00, 6.00},
+	"deepseek-chat":              {0.27, 1.10},
+	"grok-2":                     {2.00, 10.00},
+}
+
 func saveConfig(m model) {
 	apiKeys := make(map[string]string, len(m.apiKeys))
 	for k, v := range m.apiKeys {
@@ -24,7 +39,7 @@ func saveConfig(m model) {
 			agents[i].Provider = "google"
 		}
 	}
-	data := savedConfig{APIKeys: apiKeys, Agents: agents}
+	data := savedConfig{APIKeys: apiKeys, Agents: agents, ShowTokenEstimate: m.showTokenEstimate}
 	b, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return
@@ -32,14 +47,14 @@ func saveConfig(m model) {
 	os.WriteFile(configFile, b, 0600)
 }
 
-func loadConfig() (map[string]string, []agentCfg) {
+func loadConfig() (map[string]string, []agentCfg, bool) {
 	b, err := os.ReadFile(configFile)
 	if err != nil {
-		return make(map[string]string), []agentCfg{}
+		return make(map[string]string), []agentCfg{}, false
 	}
 	var data savedConfig
 	if err := json.Unmarshal(b, &data); err != nil {
-		return make(map[string]string), []agentCfg{}
+		return make(map[string]string), []agentCfg{}, false
 	}
 	if data.APIKeys == nil {
 		data.APIKeys = make(map[string]string)
@@ -82,5 +97,5 @@ func loadConfig() (map[string]string, []agentCfg) {
 			clean = append(clean, a)
 		}
 	}
-	return data.APIKeys, clean
+	return data.APIKeys, clean, data.ShowTokenEstimate
 }

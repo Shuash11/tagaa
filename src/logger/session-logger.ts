@@ -9,11 +9,19 @@ export interface SessionLog {
   entries: SessionLogEntry[];
 }
 
+export interface SessionSummary {
+  sessionId: string;
+  startedAt: string;
+  completedAt: string | null;
+}
+
 export class SessionLogger {
+  private sessionsDir: string;
   private logPath: string;
   private log: SessionLog;
 
   constructor(sessionId: string, sessionsDir: string = "sessions") {
+    this.sessionsDir = sessionsDir;
     this.logPath = path.join(sessionsDir, `session-${sessionId}.json`);
     this.log = {
       sessionId,
@@ -49,5 +57,31 @@ export class SessionLogger {
 
   getLogPath(): string {
     return this.logPath;
+  }
+
+  async listSessions(): Promise<SessionSummary[]> {
+    try {
+      const entries = await fs.readdir(this.sessionsDir);
+      const sessionFiles = entries.filter((e) => e.startsWith("session-") && e.endsWith(".json"));
+      const summaries: SessionSummary[] = [];
+      for (const file of sessionFiles) {
+        try {
+          const data = await fs.readFile(path.join(this.sessionsDir, file), "utf-8");
+          const parsed = JSON.parse(data);
+          const sessionId = file.replace(/^session-/, "").replace(/\.json$/, "");
+          summaries.push({
+            sessionId,
+            startedAt: parsed.startedAt || "unknown",
+            completedAt: parsed.completedAt || null,
+          });
+        } catch {
+          // skip unreadable files
+        }
+      }
+      summaries.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+      return summaries;
+    } catch {
+      return [];
+    }
   }
 }

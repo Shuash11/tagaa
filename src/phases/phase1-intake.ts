@@ -63,8 +63,10 @@ function classifyTask(input: string): string {
 function extractFilePaths(input: string): string[] {
   const paths: string[] = [];
   const patterns = [
-    /([\w.-]+\/[\w.\/-]+)/g,
-    /`([^`]+\.[a-z]+)`/g,
+    // backtick-wrapped paths: `path/to/file.ts`
+    /`([^`]+\.[a-zA-Z]{1,6})`/g,
+    // relative paths with file extension: ./path/to/file.ts, ../path/file.ts
+    /(?<!\w)(\.\/|\.\.\/)?[\w-]+\/[\w.\/-]+\.\w{1,6}(?!\w)/g,
   ];
 
   for (const pattern of patterns) {

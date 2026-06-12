@@ -1,4 +1,4 @@
-export type AppPhase = "idle" | "intake" | "plan" | "vote" | "execute" | "done" | "error";
+export type AppPhase = "idle" | "intake" | "plan_generation" | "plan_vote" | "compatibility_vote" | "execution" | "plan" | "vote" | "execute" | "done" | "error";
 
 export interface AgentInfo {
   name: string;

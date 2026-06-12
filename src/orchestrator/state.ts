@@ -9,6 +9,7 @@ export type Phase =
   | "execution"
   | "bug_fix_council"
   | "peer_review"
+  | "awaiting_user_input"
   | "complete";
 
 export interface SessionState {
@@ -22,6 +23,7 @@ export interface SessionState {
   selectedExecutor: string | null;
   executionOutputs: ExecutionOutput[];
   bugFixCycles: number;
+  changedFiles: Map<string, string>;
   peerReviews: PeerReview[];
   dissentVotes: PlanVote[];
   error: string | null;
@@ -43,6 +45,7 @@ export function createSessionState(sessionId: string): SessionState {
     selectedExecutor: null,
     executionOutputs: [],
     bugFixCycles: 0,
+    changedFiles: new Map(),
     peerReviews: [],
     dissentVotes: [],
     error: null,
