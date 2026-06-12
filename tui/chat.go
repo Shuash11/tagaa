@@ -19,7 +19,7 @@ func fetchModelsCmd(id, key string) tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := &http.Client{Timeout: 20 * time.Second}
 		req, err := http.NewRequest("GET", base+"/v1/models", nil)
 		if err != nil {
 			return fetchModelsMsg{provider: id, err: err}
@@ -38,8 +38,8 @@ func fetchModelsCmd(id, key string) tea.Cmd {
 		resp, err := client.Do(req)
 		if err != nil {
 			short := err.Error()
-			if len(short) > 40 {
-				short = short[:40] + "…"
+			if len(short) > 80 {
+				short = short[:80] + "…"
 			}
 			return fetchModelsMsg{provider: id, err: errors.New(short)}
 		}
