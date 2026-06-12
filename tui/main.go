@@ -157,11 +157,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.agentEdit = false
 			return m, nil
 		case "ctrl+up":
-			m.scrollOffset++
+			m.scrollOffset += 3
 			return m, nil
 		case "ctrl+down":
-			if m.scrollOffset > 0 {
-				m.scrollOffset--
+			if m.scrollOffset >= 3 {
+				m.scrollOffset -= 3
+			} else {
+				m.scrollOffset = 0
+			}
+			return m, nil
+		case "pgup":
+			m.scrollOffset += m.h / 2
+			return m, nil
+		case "pgdown":
+			n := m.h / 2
+			if m.scrollOffset >= n {
+				m.scrollOffset -= n
+			} else {
+				m.scrollOffset = 0
 			}
 			return m, nil
 		case "ctrl+e":
@@ -241,7 +254,7 @@ func (m model) View() string {
 		phaseStr = lipgloss.NewStyle().Faint(true).Foreground(muteC).Render(" [idle]")
 	}
 	if m.scrollOffset > 0 {
-		phaseStr += lipgloss.NewStyle().Foreground(muteC).Render(fmt.Sprintf(" ↑%d", m.scrollOffset))
+		phaseStr += lipgloss.NewStyle().Foreground(accentC).Render(fmt.Sprintf(" ↑%d", m.scrollOffset))
 	}
 
 	sessionStr := ""
@@ -300,25 +313,41 @@ func (m model) View() string {
 		return mainCol
 	}
 
-	total := len(m.messages) - m.scrollOffset
-	start := 0
-	if total > msgH {
-		start = total - msgH
+	var allLines []string
+	for _, msg := range m.messages {
+		r := renderMessage(msg, msgW)
+		allLines = append(allLines, strings.Split(r, "\n")...)
 	}
+
+	// scrollOffset = lines from bottom to skip
+	maxOff := len(allLines) - msgH
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	if m.scrollOffset > maxOff {
+		m.scrollOffset = maxOff
+	}
+	if m.scrollOffset < 0 {
+		m.scrollOffset = 0
+	}
+	end := len(allLines) - m.scrollOffset
+	start := end - msgH
 	if start < 0 {
 		start = 0
 	}
-
-	var body strings.Builder
-	for i := start; i < len(m.messages)-m.scrollOffset; i++ {
-		rendered := renderMessage(m.messages[i], msgW)
-		body.WriteString(rendered)
-		body.WriteString("\n")
+	if end > len(allLines) {
+		end = len(allLines)
+	}
+	if start > end {
+		start = end
 	}
 
-	lines := strings.Count(body.String(), "\n")
-	extra := msgH - lines
-	for range extra {
+	var body strings.Builder
+	for _, line := range allLines[start:end] {
+		body.WriteString(line)
+		body.WriteString("\n")
+	}
+	for i := end - start; i < msgH; i++ {
 		body.WriteString(strings.Repeat(" ", msgW) + "\n")
 	}
 
