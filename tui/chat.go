@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -108,6 +110,53 @@ func (m model) nextAgentName() string {
 	return ""
 }
 
+var writeFileTool = map[string]interface{}{
+	"type": "function",
+	"function": map[string]interface{}{
+		"name":        "write_file",
+		"description": "Write content to a file at the specified path. Creates parent directories if they don't exist.",
+		"parameters": map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"path": map[string]interface{}{
+					"type":        "string",
+					"description": "Full file path to write to (e.g. C:\\projects\\tae\\essay.txt)",
+				},
+				"content": map[string]interface{}{
+					"type":        "string",
+					"description": "Content to write to the file",
+				},
+			},
+			"required": []interface{}{"path", "content"},
+		},
+	},
+}
+
+func executeToolCall(name string, argsJSON string) (result string) {
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("Failed to parse tool arguments: %v", err)
+	}
+	switch name {
+	case "write_file":
+		path, _ := args["path"].(string)
+		content, _ := args["content"].(string)
+		if path == "" {
+			return "Missing 'path' argument"
+		}
+		dir := filepath.Dir(path)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Sprintf("Failed to create directory %s: %v", dir, err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			return fmt.Sprintf("Failed to write file %s: %v", path, err)
+		}
+		return fmt.Sprintf("Successfully wrote %d bytes to %s", len(content), path)
+	default:
+		return fmt.Sprintf("Unknown tool: %s", name)
+	}
+}
+
 func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 	var agent agentCfg
 	found := false
@@ -163,8 +212,10 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 	key := m.apiKeys[agent.Provider]
 
 	type chatMsg struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
+		Role       string     `json:"role"`
+		Content    string     `json:"content,omitempty"`
+		ToolCallID string     `json:"tool_call_id,omitempty"`
+		ToolCalls  []toolCall `json:"tool_calls,omitempty"`
 	}
 	var systemParts []string
 	var apiMsgs []chatMsg
@@ -194,6 +245,13 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 		var reqBody []byte
 		var req *http.Request
 		var err error
+
+		type openAIReq struct {
+			Model     string                   `json:"model"`
+			Messages  []chatMsg                `json:"messages"`
+			MaxTokens int                      `json:"max_tokens,omitempty"`
+			Tools     []map[string]interface{} `json:"tools,omitempty"`
+		}
 
 		if agent.Provider == "anthropic" {
 			type anthropicReq struct {
@@ -237,12 +295,7 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 			}
 			req.Header.Set("Content-Type", "application/json")
 		} else {
-			type openAIReq struct {
-				Model     string    `json:"model"`
-				Messages  []chatMsg `json:"messages"`
-				MaxTokens int       `json:"max_tokens,omitempty"`
-			}
-			reqBody, _ = json.Marshal(openAIReq{Model: agent.Model, Messages: apiMsgs, MaxTokens: 4096})
+			reqBody, _ = json.Marshal(openAIReq{Model: agent.Model, Messages: apiMsgs, MaxTokens: 4096, Tools: []map[string]interface{}{writeFileTool}})
 			req, err = http.NewRequestWithContext(ctx, "POST", base+"/v1/chat/completions", strings.NewReader(string(reqBody)))
 			if err != nil {
 				return chatErrMsg{content: err.Error()}
@@ -315,16 +368,67 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 		var openAIResp struct {
 			Choices []struct {
 				Message struct {
-					Content string `json:"content"`
+					Content   string     `json:"content"`
+					ToolCalls []toolCall `json:"tool_calls"`
 				} `json:"message"`
 			} `json:"choices"`
 		}
 		if err := json.Unmarshal(body, &openAIResp); err != nil {
 			return chatErrMsg{content: "Failed to parse response"}
 		}
-		if len(openAIResp.Choices) > 0 {
-			return chatRespMsg{agentName: agent.Name, content: openAIResp.Choices[0].Message.Content, provider: agent.Provider}
+		if len(openAIResp.Choices) == 0 {
+			return chatErrMsg{content: "Empty response"}
 		}
-		return chatErrMsg{content: "Empty response"}
+		msg := openAIResp.Choices[0].Message
+		if len(msg.ToolCalls) == 0 {
+			return chatRespMsg{agentName: agent.Name, content: msg.Content, provider: agent.Provider}
+		}
+
+		// Tool calls present — execute each one and make a follow-up API call
+		var toolSummary string
+		for _, tc := range msg.ToolCalls {
+			result := executeToolCall(tc.Function.Name, tc.Function.Arguments)
+			apiMsgs = append(apiMsgs, chatMsg{Role: "assistant", ToolCalls: []toolCall{tc}})
+			apiMsgs = append(apiMsgs, chatMsg{Role: "tool", ToolCallID: tc.ID, Content: result})
+			if strings.HasPrefix(result, "Successfully") {
+				toolSummary = result
+			}
+		}
+		reqBody2, _ := json.Marshal(openAIReq{Model: agent.Model, Messages: apiMsgs, MaxTokens: 4096})
+		req2, err := http.NewRequestWithContext(ctx, "POST", base+"/v1/chat/completions", strings.NewReader(string(reqBody2)))
+		if err != nil {
+			return chatErrMsg{content: "Follow-up request failed: " + err.Error()}
+		}
+		req2.Header.Set("Authorization", "Bearer "+key)
+		req2.Header.Set("Content-Type", "application/json")
+		resp2, err := client.Do(req2)
+		if err != nil {
+			return chatErrMsg{content: "Follow-up call failed: " + err.Error()}
+		}
+		defer resp2.Body.Close()
+		body2, err := io.ReadAll(resp2.Body)
+		if err != nil {
+			return chatErrMsg{content: "Failed to read follow-up response"}
+		}
+		var openAIResp2 struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal(body2, &openAIResp2); err != nil {
+			if toolSummary != "" {
+				return chatRespMsg{agentName: agent.Name, content: toolSummary + "\n\n(Parse error on follow-up)", provider: agent.Provider, toolResult: toolSummary}
+			}
+			return chatErrMsg{content: "Failed to parse follow-up response"}
+		}
+		if len(openAIResp2.Choices) > 0 {
+			return chatRespMsg{agentName: agent.Name, content: openAIResp2.Choices[0].Message.Content, provider: agent.Provider, toolResult: toolSummary}
+		}
+		if toolSummary != "" {
+			return chatRespMsg{agentName: agent.Name, content: toolSummary, provider: agent.Provider, toolResult: toolSummary}
+		}
+		return chatErrMsg{content: "Empty follow-up response"}
 	}
 }
