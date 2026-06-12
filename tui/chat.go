@@ -44,6 +44,10 @@ func fetchModelsCmd(id, key string) tea.Cmd {
 			return fetchModelsMsg{provider: id, err: errors.New(short)}
 		}
 		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fetchModelsMsg{provider: id, err: err}
+		}
 		if resp.StatusCode >= 400 {
 			short := fmt.Sprintf("HTTP %d", resp.StatusCode)
 			if resp.StatusCode == 401 {
@@ -57,11 +61,11 @@ func fetchModelsCmd(id, key string) tea.Cmd {
 			} else {
 				short += " Error"
 			}
-			return fetchModelsMsg{provider: id, err: errors.New(short)}
-		}
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return fetchModelsMsg{provider: id, err: err}
+			bodyStr := string(body)
+			if len(bodyStr) > 60 {
+				bodyStr = bodyStr[:60]
+			}
+			return fetchModelsMsg{provider: id, err: fmt.Errorf("%s: %s", short, bodyStr)}
 		}
 		var names []string
 		var openAI struct {
@@ -86,7 +90,11 @@ func fetchModelsCmd(id, key string) tea.Cmd {
 			}
 			return fetchModelsMsg{provider: id, models: names}
 		}
-		return fetchModelsMsg{provider: id, err: fmt.Errorf("unrecognized response")}
+		bodyStr := string(body)
+			if len(bodyStr) > 80 {
+				bodyStr = bodyStr[:80] + "..."
+			}
+			return fetchModelsMsg{provider: id, err: fmt.Errorf("unrecognized: %s", bodyStr)}
 	}
 }
 
