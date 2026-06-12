@@ -148,6 +148,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "ctrl+d":
 			saveSessions(m.messages)
 			return m, tea.Quit
+		case "esc":
+			if m.cmdMode {
+				m.cmdMode = false
+			}
+			return m, nil
 		case "ctrl+b":
 			m.sidebar = !m.sidebar
 			return m, nil
@@ -199,9 +204,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
 			}
 			return m, nil
-		case "up", "down", "left", "right":
+		case "up", "down":
+			if m.cmdMode {
+				n := len(m.cmdSessions)
+				if n == 0 {
+					return m, nil
+				}
+				if msg.String() == "up" {
+					m.cmdCur--
+					if m.cmdCur < 0 {
+						m.cmdCur = n - 1
+					}
+				} else {
+					m.cmdCur++
+					if m.cmdCur >= n {
+						m.cmdCur = 0
+					}
+				}
+				return m, nil
+			}
+			return m, nil
+		case "left", "right":
 			return m, nil
 		case "enter":
+			if m.cmdMode {
+				return m, nil
+			}
 			if m.isRunning {
 				return m, nil
 			}
@@ -217,6 +245,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "backspace":
+			if m.cmdMode {
+				m.cmdMode = false
+				return m, nil
+			}
 			if len(m.input) > 0 {
 				m.input = m.input[:len(m.input)-1]
 			}
@@ -227,6 +259,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			s := msg.String()
 			if len(s) == 1 && s[0] >= 32 && s[0] < 127 {
+				if m.cmdMode {
+					if s == "d" && m.cmdCur < len(m.cmdSessions) {
+						id := m.cmdSessions[m.cmdCur].ID
+						deleteSession(id)
+						m.cmdSessions = loadAllSessions().Sessions
+						if m.cmdCur >= len(m.cmdSessions) && m.cmdCur > 0 {
+							m.cmdCur--
+						}
+					}
+					return m, nil
+				}
+				if m.input == "" && s == "/" {
+					m.cmdMode = true
+					m.cmdCur = 0
+					m.cmdSessions = loadAllSessions().Sessions
+					return m, nil
+				}
 				m.input += s
 			}
 		}
@@ -310,6 +359,15 @@ func (m model) View() string {
 		} else {
 			msgs = m.agentsView(msgW, msgH)
 		}
+		mainCol := lipgloss.JoinVertical(lipgloss.Top, hdr, msgs, inp)
+		if m.sidebar {
+			return lipgloss.JoinHorizontal(lipgloss.Top, mainCol, m.sideView())
+		}
+		return mainCol
+	}
+
+	if m.cmdMode {
+		msgs := m.cmdModeView(msgW, msgH)
 		mainCol := lipgloss.JoinVertical(lipgloss.Top, hdr, msgs, inp)
 		if m.sidebar {
 			return lipgloss.JoinHorizontal(lipgloss.Top, mainCol, m.sideView())

@@ -211,3 +211,59 @@ func (m model) sideView() string {
 		PaddingLeft(1).
 		Render(b.String())
 }
+
+func (m model) cmdModeView(w, h int) string {
+	dw := 50
+	if w < dw+4 {
+		dw = w - 4
+	}
+	if dw < 20 {
+		dw = 20
+	}
+	dh := 15
+	if h < dh+2 {
+		dh = h - 2
+	}
+	if dh < 5 {
+		dh = 5
+	}
+
+	style := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(accentC).
+		Padding(0, 1).
+		Width(dw).
+		Background(dialogBg)
+
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(accentC).Render(" Sessions"))
+	b.WriteString("\n\n")
+
+	if len(m.cmdSessions) == 0 {
+		b.WriteString(lipgloss.NewStyle().Foreground(muteC).Render("  No saved sessions"))
+	} else {
+		for i, s := range m.cmdSessions {
+			prefix := "  "
+			clr := lipgloss.Color("#E6E6E6")
+			if i == m.cmdCur {
+				prefix = "▸ "
+				clr = accentC
+			}
+			line := fmt.Sprintf("%s#%d  %s  (%d msgs)", prefix, s.ID, s.Timestamp, len(s.Messages))
+			if len(line) > dw {
+				line = line[:dw]
+			}
+			b.WriteString(lipgloss.NewStyle().Foreground(clr).Render(line))
+			b.WriteString("\n")
+		}
+	}
+
+	b.WriteString("\n")
+	b.WriteString(lipgloss.NewStyle().Faint(true).Foreground(muteC).Render("  ↑↓ navigate · d delete · esc close"))
+
+	return lipgloss.Place(w, h,
+		lipgloss.Center, lipgloss.Center,
+		style.Render(b.String()),
+		lipgloss.WithWhitespaceBackground(bg),
+	)
+}
