@@ -122,23 +122,27 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case "esc":
 				m.agentEdit = false
 			case "up":
-				idx := len(providers) - 1
+				idx := -1
 				for i, p := range providers {
 					if p.id == m.agentTemp && i > 0 {
 						idx = i - 1
 						break
 					}
 				}
-				m.agentTemp = providers[idx].id
+				if idx >= 0 {
+					m.agentTemp = providers[idx].id
+				}
 			case "down":
-				idx := 0
+				idx := -1
 				for i, p := range providers {
 					if p.id == m.agentTemp && i < len(providers)-1 {
 						idx = i + 1
 						break
 					}
 				}
-				m.agentTemp = providers[idx].id
+				if idx >= 0 {
+					m.agentTemp = providers[idx].id
+				}
 			}
 		case 2:
 			models := m.models[m.agents[m.agentCur].Provider]

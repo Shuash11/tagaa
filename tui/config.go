@@ -35,6 +35,17 @@ func loadConfig() (map[string]string, []agentCfg) {
 			data.Agents[i].Enabled = true
 		}
 	}
+	// migration: TypeScript config uses "google" but TUI uses "gemini"
+	if key, ok := data.APIKeys["google"]; ok {
+		delete(data.APIKeys, "google")
+		data.APIKeys["gemini"] = key
+	}
+	for i := range data.Agents {
+		if data.Agents[i].Provider == "google" {
+			data.Agents[i].Provider = "gemini"
+		}
+	}
+
 	// migration: remove empty-agent artifacts (old config with {} entries)
 	clean := make([]agentCfg, 0, len(data.Agents))
 	for _, a := range data.Agents {

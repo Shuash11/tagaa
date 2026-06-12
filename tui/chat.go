@@ -92,7 +92,10 @@ func fetchModelsCmd(id, key string) tea.Cmd {
 func sendChatCmd(m model) tea.Cmd {
 	var agent agentCfg
 	found := false
-	for _, a := range m.agents {
+	n := len(m.agents)
+	for i := 0; i < n; i++ {
+		idx := (m.msgAgentIdx + i) % n
+		a := m.agents[idx]
 		if a.Enabled && a.Provider != "" && a.Model != "" && m.apiKeys[a.Provider] != "" {
 			agent = a
 			found = true
