@@ -91,10 +91,10 @@ func fetchModelsCmd(id, key string) tea.Cmd {
 			return fetchModelsMsg{provider: id, models: names}
 		}
 		bodyStr := string(body)
-			if len(bodyStr) > 80 {
-				bodyStr = bodyStr[:80] + "..."
-			}
-			return fetchModelsMsg{provider: id, err: fmt.Errorf("unrecognized: %s", bodyStr)}
+		if len(bodyStr) > 80 {
+			bodyStr = bodyStr[:80] + "..."
+		}
+		return fetchModelsMsg{provider: id, err: fmt.Errorf("unrecognized: %s", bodyStr)}
 	}
 }
 

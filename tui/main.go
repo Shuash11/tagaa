@@ -240,6 +240,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.orchMode {
 				m.orchInput = ""
 				m.orchMessages = nil
+				m.scrollOffset = 0
 			}
 			return m, nil
 		}
@@ -325,7 +326,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pipeline = PipelineState{}
 				m.streamText = ""
 				m.streamPos = 0
-m.pendingAgents = nil
+				m.pendingAgents = nil
 				m.agentResponses = nil
 				m.messages = append(m.messages, Message{Kind: MsgSystem, Content: "Cancelled"})
 				m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
@@ -407,7 +408,7 @@ m.pendingAgents = nil
 					return m, nil
 				}
 
-m.pendingAgents = nil
+				m.pendingAgents = nil
 				m.agentResponses = nil
 				m.pipelineCh = make(chan pipelineBatchMsg, 10)
 				m.isRunning = true
@@ -426,11 +427,21 @@ m.pendingAgents = nil
 				m.cmdMode = false
 				return m, nil
 			}
+			if m.orchMode {
+				if len(m.orchInput) > 0 {
+					m.orchInput = m.orchInput[:len(m.orchInput)-1]
+				}
+				return m, nil
+			}
 			if len(m.input) > 0 {
 				m.input = m.input[:len(m.input)-1]
 			}
 			return m, nil
 		case " ":
+			if m.orchMode {
+				m.orchInput += " "
+				return m, nil
+			}
 			m.input += " "
 			return m, nil
 		default:
@@ -445,6 +456,10 @@ m.pendingAgents = nil
 							m.cmdCur--
 						}
 					}
+					return m, nil
+				}
+				if m.orchMode {
+					m.orchInput += s
 					return m, nil
 				}
 				if m.input == "" && s == "/" {

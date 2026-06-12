@@ -538,10 +538,26 @@ func (m model) cmdModeView(w, h int) string {
 	if len(m.cmdSessions) == 0 {
 		b.WriteString(lipgloss.NewStyle().Foreground(muteC).Render("  No saved sessions"))
 	} else {
-		for i, s := range m.cmdSessions {
+		maxVisible := 8
+		start := 0
+		if len(m.cmdSessions) > maxVisible {
+			start = m.cmdCur - maxVisible/2
+			if start < 0 {
+				start = 0
+			}
+			if start+maxVisible > len(m.cmdSessions) {
+				start = len(m.cmdSessions) - maxVisible
+			}
+		}
+		if start > 0 {
+			b.WriteString(lipgloss.NewStyle().Foreground(muteC).Render("  ... (scroll)"))
+			b.WriteString("\n")
+		}
+		for si := start; si < start+maxVisible && si < len(m.cmdSessions); si++ {
+			s := m.cmdSessions[si]
 			prefix := "  "
 			clr := lipgloss.Color("#E6E6E6")
-			if i == m.cmdCur {
+			if si == m.cmdCur {
 				prefix = "▸ "
 				clr = accentC
 			}
@@ -551,6 +567,10 @@ func (m model) cmdModeView(w, h int) string {
 				line = string(runes[:dw])
 			}
 			b.WriteString(lipgloss.NewStyle().Foreground(clr).Render(line))
+			b.WriteString("\n")
+		}
+		if start+maxVisible < len(m.cmdSessions) {
+			b.WriteString(lipgloss.NewStyle().Foreground(muteC).Render("  ... (more)"))
 			b.WriteString("\n")
 		}
 	}

@@ -274,7 +274,12 @@ func (p *Pipeline) runOrchReviewPhase(ctx context.Context) []Message {
 	for name, output := range p.workerOutputs {
 		workerSummary.WriteString("\n--- " + name + " ---\n")
 		if len(output) > 500 {
-			workerSummary.WriteString(output[:500] + "...\n")
+			runes := []rune(output)
+			if len(runes) > 500 {
+				workerSummary.WriteString(string(runes[:500]) + "...\n")
+			} else {
+				workerSummary.WriteString(output + "\n")
+			}
 		} else {
 			workerSummary.WriteString(output + "\n")
 		}

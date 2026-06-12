@@ -113,19 +113,38 @@ func (m model) View() string {
 
 	// Orchestrator chat view
 	if m.orchMode {
-		// show orchMessages in main area
 		var allLines []string
 		for _, msg := range m.orchMessages {
 			r := m.renderMessage(msg, 0, msgW)
 			allLines = append(allLines, strings.Split(r, "\n")...)
 		}
-		// pad
-		for i := 0; i < msgH-len(allLines); i++ {
-			allLines = append(allLines, strings.Repeat(" ", msgW))
+		maxOff := len(allLines) - msgH
+		if maxOff < 0 {
+			maxOff = 0
+		}
+		if m.scrollOffset > maxOff {
+			m.scrollOffset = maxOff
+		}
+		if m.scrollOffset < 0 {
+			m.scrollOffset = 0
+		}
+		end := len(allLines) - m.scrollOffset
+		start := end - msgH
+		if start < 0 {
+			start = 0
+		}
+		if end > len(allLines) {
+			end = len(allLines)
+		}
+		if start > end {
+			start = end
 		}
 		var body strings.Builder
-		for _, line := range allLines[:msgH] {
+		for _, line := range allLines[start:end] {
 			body.WriteString(line + "\n")
+		}
+		for i := end - start; i < msgH; i++ {
+			body.WriteString(strings.Repeat(" ", msgW) + "\n")
 		}
 		msgs := lipgloss.NewStyle().Background(bg).Width(msgW).Render(body.String())
 		mainCol := lipgloss.JoinVertical(lipgloss.Top, hdr, msgs, inp)

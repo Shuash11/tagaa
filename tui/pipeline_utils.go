@@ -200,15 +200,17 @@ func (p *Pipeline) plansSummary() string {
 	var sb strings.Builder
 	for i, pl := range p.plans {
 		sb.WriteString(fmt.Sprintf("\n--- Plan %d: %s ---\n", i+1, pl.AgentName))
-		if len(pl.Plan) > perPlan {
-			sb.WriteString(pl.Plan[:perPlan] + "\n[truncated]")
+		runes := []rune(pl.Plan)
+		if len(runes) > perPlan {
+			sb.WriteString(string(runes[:perPlan]) + "\n[truncated]")
 		} else {
 			sb.WriteString(pl.Plan)
 		}
 	}
 	result := sb.String()
-	if len(result) > maxSummaryTotal {
-		result = result[:maxSummaryTotal] + "\n[total truncated]"
+	resultRunes := []rune(result)
+	if len(resultRunes) > maxSummaryTotal {
+		result = string(resultRunes[:maxSummaryTotal]) + "\n[total truncated]"
 	}
 	return result
 }

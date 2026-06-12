@@ -337,7 +337,17 @@ func (m model) keysView(msgW, msgH int) string {
 		if i == m.setCur && m.apiKeys[p.id] != "" && !m.setEdit {
 			models := m.models[p.id]
 			if len(models) > 0 && !m.modelsLoading[p.id] {
-				for _, mn := range models {
+				showCount := 8
+				for mi, mn := range models {
+					if mi >= showCount {
+						left := len(models) - showCount
+						if left > 0 {
+							b.WriteString(lipgloss.NewStyle().Foreground(muteC).Render(
+								fmt.Sprintf("     ... and %d more", left)))
+							b.WriteString("\n")
+						}
+						break
+					}
 					line := fmt.Sprintf("     %s", mn)
 					if len(line) > dw-4 {
 						line = line[:dw-4]
@@ -460,9 +470,9 @@ func (m model) agentsView(msgW, msgH int) string {
 				shown := 0
 				maxShow := 6
 				selIdx := -1
-				for i, pp := range providers {
+				for pi, pp := range providers {
 					if pp.id == m.agentTemp {
-						selIdx = i
+						selIdx = pi
 						break
 					}
 				}
@@ -505,9 +515,9 @@ func (m model) agentsView(msgW, msgH int) string {
 					shown := 0
 					maxShow := 6
 					selIdx := -1
-					for i, mn := range models {
+					for mi, mn := range models {
 						if mn == m.agentTemp {
-							selIdx = i
+							selIdx = mi
 							break
 						}
 					}

@@ -64,17 +64,20 @@ func (m model) updSidebarConfig(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.sidebarProv = ""
 			return m, nil
 		} else if m.sidebarStep == 1 {
-			filteredIdx := 0
+			filteredCount := 0
 			var pid string
 			for _, p := range providers {
 				if m.apiKeys[p.id] == "" {
 					continue
 				}
-				if filteredIdx == m.sidebarCur {
+				if filteredCount == m.sidebarCur {
 					pid = p.id
-					break
 				}
-				filteredIdx++
+				filteredCount++
+			}
+			if pid == "" {
+				m.sidebarConfig = false
+				return m, nil
 			}
 			m.sidebarProv = pid
 			m.agents[m.sidebarSel].Provider = pid
