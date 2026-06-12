@@ -99,6 +99,8 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				saveConfig(m)
 			case "esc":
 				m.agentEdit = false
+				m.agentField = 0
+				m.agentTemp = ""
 			case "backspace":
 				if len(m.agentTemp) > 0 {
 					m.agentTemp = m.agentTemp[:len(m.agentTemp)-1]
@@ -121,6 +123,8 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				saveConfig(m)
 			case "esc":
 				m.agentEdit = false
+				m.agentField = 0
+				m.agentTemp = ""
 			case "up":
 				idx := -1
 				for i, p := range providers {
@@ -153,8 +157,11 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					saveConfig(m)
 				}
 				m.agentEdit = false
+				m.agentField = 0
 			case "esc":
 				m.agentEdit = false
+				m.agentField = 0
+				m.agentTemp = ""
 			case "up":
 				if len(models) == 0 {
 					return m, nil

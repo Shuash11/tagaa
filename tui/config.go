@@ -16,11 +16,28 @@ var tokenCosts = map[string]struct{ input, output float64 }{
 	"gpt-4o":                     {2.50, 10.00},
 	"gpt-4o-mini":                {0.15, 0.60},
 	"gpt-4-turbo":                {10.00, 30.00},
+	"gpt-3.5-turbo":              {0.50, 1.50},
 	"gemini-2.0-flash":           {0.10, 0.40},
+	"gemini-2.5-pro":             {1.25, 5.00},
 	"gemini-1.5-pro":             {1.25, 5.00},
+	"gemini-1.5-flash":           {0.075, 0.30},
 	"mistral-large-latest":       {2.00, 6.00},
 	"deepseek-chat":              {0.27, 1.10},
 	"grok-2":                     {2.00, 10.00},
+}
+
+var providerCostFallback = map[string]struct{ input, output float64 }{
+	"anthropic":  {3.00, 15.00},
+	"openai":     {2.50, 10.00},
+	"gemini":     {0.10, 0.40},
+	"mistral":    {2.00, 6.00},
+	"deepseek":   {0.27, 1.10},
+	"xai":        {2.00, 10.00},
+	"nvidia":     {1.00, 5.00},
+	"groq":       {0.50, 2.00},
+	"together":   {1.00, 5.00},
+	"openrouter": {1.00, 5.00},
+	"cohere":     {1.00, 5.00},
 }
 
 func saveConfig(m model) {

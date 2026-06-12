@@ -56,7 +56,14 @@ func (m model) View() string {
 	cursor := lipgloss.NewStyle().Background(lipgloss.Color("#E6E6E6")).Render(" ")
 	var inpContent string
 	if m.isRunning {
-		inpContent = lipgloss.NewStyle().Bold(true).Foreground(blueC).Render("◆ Waiting for response…")
+		phase := m.pipeline.ActivePhase()
+		if phase != "" {
+			inpContent = lipgloss.NewStyle().Bold(true).Foreground(blueC).Render("◆ " + phase + "…")
+		} else if m.phase != "" {
+			inpContent = lipgloss.NewStyle().Bold(true).Foreground(blueC).Render("◆ " + m.phase + "…")
+		} else {
+			inpContent = lipgloss.NewStyle().Bold(true).Foreground(blueC).Render("◆ Waiting for response…")
+		}
 	} else {
 		inpContent = lipgloss.NewStyle().Bold(true).Foreground(accentC).Render("λ ") +
 			lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E6E6E6")).Render(m.input) +
@@ -105,9 +112,20 @@ func (m model) View() string {
 	if len(m.pendingAgents) > 0 {
 		frame = spinnerFrames[m.spinnerIdx]
 	}
+
+	doneNames := make(map[string]bool)
+	for _, resp := range m.agentResponses {
+		doneNames[resp.AgentName] = true
+	}
+
 	for _, pa := range m.pendingAgents {
-		elapsed := fmt.Sprintf("(%.1fs)", pa.Elapsed.Seconds())
-		allLines = append(allLines, lipgloss.NewStyle().Foreground(pa.Color).Render("  🤔 "+pa.Name+"  "+frame+" Generating plan...  "+elapsed))
+		if doneNames[pa.Name] {
+			elapsed := fmt.Sprintf("(%.1fs)", pa.Elapsed.Seconds())
+			allLines = append(allLines, lipgloss.NewStyle().Foreground(pa.Color).Render("  ✓ "+pa.Name+"  Done  "+elapsed))
+		} else {
+			elapsed := fmt.Sprintf("(%.1fs)", pa.Elapsed.Seconds())
+			allLines = append(allLines, lipgloss.NewStyle().Foreground(pa.Color).Render("  🤔 "+pa.Name+"  "+frame+" Generating...  "+elapsed))
+		}
 	}
 	if len(m.pendingAgents) > 0 {
 		allLines = append(allLines, "")

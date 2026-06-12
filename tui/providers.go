@@ -35,7 +35,7 @@ var keyPrefixes = map[string]string{
 	"openai":     "sk-",
 	"groq":       "gsk_",
 	"deepseek":   "sk-",
-	"together":   "t8ke_",
+	"together":   "",
 	"openrouter": "sk-or-",
 	"cohere":     "",
 }

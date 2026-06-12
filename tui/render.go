@@ -33,10 +33,12 @@ func renderVoteBox(phase string, scores map[string]float64, winner string, entri
 	var b strings.Builder
 
 	wl := func(s string) {
-		if len(s) > innerW {
-			s = s[:innerW]
+		runes := []rune(s)
+		if len(runes) > innerW {
+			runes = runes[:innerW]
+			s = string(runes)
 		}
-		b.WriteString("║" + s + strings.Repeat(" ", innerW-len(s)) + "║\n")
+		b.WriteString("║" + s + strings.Repeat(" ", innerW-lipgloss.Width(s)) + "║\n")
 	}
 
 	// Top border
@@ -189,8 +191,9 @@ func (m model) renderMessage(msg Message, idx int, width int) string {
 					summary = strings.TrimSpace(lines[0])
 				}
 			}
-			if len(summary) > 60 {
-				summary = summary[:60] + "..."
+			runes := []rune(summary)
+			if len(runes) > 60 {
+				summary = string(runes[:60]) + "..."
 			}
 			planCount := 0
 			for j := 0; j <= idx; j++ {
@@ -198,7 +201,7 @@ func (m model) renderMessage(msg Message, idx int, width int) string {
 					planCount++
 				}
 			}
-			collapsed := fmt.Sprintf("[ %s ] %s [expand: %d]", msg.AgentName, summary, planCount)
+			collapsed := fmt.Sprintf("[ %s ] %s  press %d to expand", msg.AgentName, summary, planCount)
 			return lipgloss.NewStyle().Foreground(msg.Color).Render(collapsed)
 		}
 
@@ -250,15 +253,29 @@ func (m model) renderMessage(msg Message, idx int, width int) string {
 		return lipgloss.NewStyle().Foreground(msg.Color).Render(top + "\n" + bodyStr + "\n" + bottom)
 
 	case MsgPhaseDivider:
+		phaseColors := map[string]lipgloss.Color{
+			"intake":    blueC,
+			"planning":  greenC,
+			"plan_vote": lipgloss.Color("#E6C06C"),
+			"exec_vote": lipgloss.Color("#C678DD"),
+			"execution": accentC,
+			"review":    redC,
+			"chat":      blueC,
+		}
+		phaseKey := strings.TrimSpace(strings.ToLower(msg.Content))
+		clr := muteC
+		if c, ok := phaseColors[phaseKey]; ok {
+			clr = c
+		}
 		txt := " " + msg.Content + " "
 		pad := width - 2 - len(txt)
 		if pad <= 0 {
-			return lipgloss.NewStyle().Foreground(muteC).Render(msg.Content)
+			return lipgloss.NewStyle().Foreground(clr).Render(msg.Content)
 		}
 		left := pad / 2
 		right := pad - left
 		line := strings.Repeat("─", left) + txt + strings.Repeat("─", right)
-		return lipgloss.NewStyle().Foreground(muteC).Render(line)
+		return lipgloss.NewStyle().Foreground(clr).Render(line)
 
 	case MsgReview:
 		var review ReviewResult
@@ -281,7 +298,8 @@ func (m model) renderMessage(msg Message, idx int, width int) string {
 			b.WriteString(lipgloss.NewStyle().Bold(true).Render("Verdict: " + review.Verdict))
 			return b.String()
 		}
-		return "[Review] " + msg.Content
+		title := fmt.Sprintf("[ %s — Reviewer ]", msg.AgentName)
+		return lipgloss.NewStyle().Bold(true).Foreground(msg.Color).Render(title) + "\n" + msg.Content
 
 	case MsgDissent:
 		boxWidth := width - 2
@@ -374,8 +392,9 @@ func (m model) sidebarDropdown(w, h int) string {
 					color = accentC
 				}
 				line := fmt.Sprintf("%s%s", sel, mn)
-				if len(line) > dw {
-					line = line[:dw]
+				runes := []rune(line)
+				if len(runes) > dw {
+					line = string(runes[:dw])
 				}
 				b.WriteString(lipgloss.NewStyle().Foreground(color).Render(line))
 				b.WriteString("\n")
@@ -514,8 +533,9 @@ func (m model) cmdModeView(w, h int) string {
 				clr = accentC
 			}
 			line := fmt.Sprintf("%s#%d  %s  (%d msgs)", prefix, s.ID, s.Timestamp, len(s.Messages))
-			if len(line) > dw {
-				line = line[:dw]
+			runes := []rune(line)
+			if len(runes) > dw {
+				line = string(runes[:dw])
 			}
 			b.WriteString(lipgloss.NewStyle().Foreground(clr).Render(line))
 			b.WriteString("\n")
@@ -544,7 +564,12 @@ func (m model) estimateCost() float64 {
 			outputCost = costs.output
 			break
 		}
+		if costs, ok := providerCostFallback[a.Provider]; ok {
+			inputCost = costs.input
+			outputCost = costs.output
+			break
+		}
 	}
 	estTokens := float64(m.totalTokens)
-	return estTokens/2_000_000*inputCost + estTokens/2_000_000*outputCost
+	return estTokens/1_000_000*inputCost + estTokens/1_000_000*outputCost
 }

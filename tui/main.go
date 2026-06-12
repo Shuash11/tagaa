@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -12,7 +13,19 @@ import (
 
 func initialModel() model {
 	apiKeys, agents, showTokenEstimate := loadConfig()
-	sid, stime, sessionMsgs := loadLatestSession()
+
+	var freshStart bool
+	for _, arg := range os.Args[1:] {
+		if arg == "--fresh" || arg == "-f" {
+			freshStart = true
+			break
+		}
+	}
+
+	sid, stime, sessionMsgs := 0, "", []Message(nil)
+	if !freshStart {
+		sid, stime, sessionMsgs = loadLatestSession()
+	}
 
 	var msgs []Message
 	if len(sessionMsgs) > 0 {
@@ -167,7 +180,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		m.scrollOffset = 0
 		m.messages = append(m.messages, Message{Kind: MsgError, Content: msg.content})
 		m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
 		if len(m.pendingAgents) == 0 && (m.streamText == "" || m.streamPos >= len(m.streamText)) {
@@ -224,6 +236,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+b":
 			m.sidebar = !m.sidebar
 			return m, nil
+		case "ctrl+n":
+			saveSessions(m.messages)
+			m.sessionID = 0
+			m.sessionTime = ""
+			m.messages = []Message{
+				{Kind: MsgSystem, Content: "◆ New session"},
+				{Kind: MsgSystem, Content: "◆ Ctrl+N new session · Ctrl+S settings · Ctrl+B sidebar"},
+				{Kind: MsgSystem, Content: ""},
+			}
+			m.totalTokens = 0
+			m.scrollOffset = 0
+			m.pipeline = PipelineState{}
+			return m, nil
 		case "ctrl+t":
 			m.thinking = !m.thinking
 			return m, nil
@@ -264,7 +289,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "ctrl+e":
-			if m.sidebar && len(m.agents) > 0 {
+			if len(m.agents) > 0 {
+				m.sidebar = true
 				m.sidebarConfig = true
 				m.sidebarSel = 0
 				m.sidebarStep = 0

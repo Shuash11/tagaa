@@ -192,6 +192,26 @@ func (ps PipelineState) String() string {
 	return result
 }
 
+func (ps PipelineState) ActivePhase() string {
+	phases := []struct {
+		s   PhaseStatus
+		lbl string
+	}{
+		{ps.Intake, "Intake"},
+		{ps.Planning, "Planning"},
+		{ps.PlanVote, "Voting"},
+		{ps.ExecVote, "Selecting Executor"},
+		{ps.Execution, "Executing"},
+		{ps.Review, "Reviewing"},
+	}
+	for _, p := range phases {
+		if p.s == PhaseActive {
+			return p.lbl
+		}
+	}
+	return ""
+}
+
 type model struct {
 	agents        []agentCfg
 	messages      []Message
