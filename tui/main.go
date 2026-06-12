@@ -105,6 +105,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, Message{Kind: MsgSystem, Content: msg.toolResult})
 			m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
 		}
+		if m.phase == "pipeline" {
+			m.pipelineCh = nil
+			m.pendingAgents = nil
+		}
 		if msg.content == "" && msg.toolResult == "" {
 			m.messages = append(m.messages, Message{Kind: MsgAgent, AgentName: msg.agentName, Content: "(empty response)", Color: clr})
 			m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})

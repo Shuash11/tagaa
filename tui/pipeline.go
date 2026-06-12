@@ -29,26 +29,9 @@ func NewPipeline(agents []agentCfg, apiKeys map[string]string) *Pipeline {
 func (p *Pipeline) Run(ctx context.Context, task string, ch chan<- pipelineBatchMsg) {
 	defer close(ch)
 
-	p.state.Intake = PhaseActive
+p.state.Intake = PhaseActive
 	ch <- p.batch("intake", p.runIntakePhase(task))
 	p.state.Intake = PhaseComplete
-	if ctx.Err() != nil {
-		return
-	}
-
-	if !isTaskRequest(task) {
-		p.state.Planning = PhaseComplete
-		p.state.PlanVote = PhaseComplete
-		p.state.ExecVote = PhaseComplete
-		p.state.Execution = PhaseComplete
-		p.state.Review = PhaseComplete
-		ch <- p.batch("chat", p.runChatResponse(ctx, task))
-		return
-	}
-
-	p.state.Planning = PhaseActive
-	ch <- p.batch("planning", p.runPlanningPhase(ctx, task))
-	p.state.Planning = PhaseComplete
 	if ctx.Err() != nil {
 		return
 	}
@@ -115,9 +98,6 @@ func (p *Pipeline) runIntakePhase(task string) []Message {
 			msgs = append(msgs, Message{Kind: MsgSystem, Content: "  " + f})
 		}
 	}
-	if !isTaskRequest(task) {
-		msgs = append(msgs, Message{Kind: MsgSystem, Content: "Detected: chat message → direct response"})
-	}
 	msgs = append(msgs, Message{Kind: MsgSystem, Content: ""})
 	return msgs
 }
@@ -127,20 +107,29 @@ func isTaskRequest(task string) bool {
 	if strings.HasPrefix(lower, "!") {
 		return true
 	}
-	filePatterns := []string{".go", ".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".java", ".c", ".cpp", ".h", ".css", ".yaml", ".yml", ".json", ".md", ".toml", "```"}
+	filePatterns := []string{".go", ".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".java", ".c", ".cpp", ".h", ".css", ".yaml", ".yml", ".json", ".md", ".toml", "```", "/src/", "/tui/", "/lib/"}
 	for _, p := range filePatterns {
 		if strings.Contains(lower, p) {
 			return true
 		}
 	}
-	imperative := []string{
-		"implement ", "refactor ", "fix the bug", "write a ", "create a ",
-		"build a ", "deploy ", "debug ", "optimize ", "configure ",
+	taskWords := []string{
+		"implement", "refactor", "fix", "bug", "write", "create", "build",
+		"deploy", "debug", "optimize", "configure", "edit", "change", "modify",
+		"update", "add", "remove", "delete", "install", "setup", "migrate",
+		"convert", "rename", "restructure", "generate", "audit", "review",
+		"benchmark", "profile", "trace", "commit", "merge", "push",
 	}
-	for _, w := range imperative {
-		if strings.HasPrefix(lower, w) {
-			return true
+	words := strings.Fields(lower)
+	for _, word := range words {
+		for _, tw := range taskWords {
+			if word == tw {
+				return true
+			}
 		}
+	}
+	if len(words) >= 10 {
+		return true
 	}
 	return false
 }
