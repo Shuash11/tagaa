@@ -307,9 +307,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.isRunning = false
 				m.pipelineCh = nil
 				m.phase = ""
+				m.pipeline = PipelineState{}
 				m.streamText = ""
 				m.streamPos = 0
-				m.pendingAgents = nil
+m.pendingAgents = nil
 				m.agentResponses = nil
 				m.messages = append(m.messages, Message{Kind: MsgSystem, Content: "Cancelled"})
 				m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})

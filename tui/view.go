@@ -14,7 +14,7 @@ func (m model) View() string {
 		return "Loading..."
 	}
 
-	sw := 22
+	sw := 23
 	mw := m.w
 	if m.sidebar {
 		mw = m.w - sw
@@ -176,7 +176,10 @@ func (m model) View() string {
 	mainCol := lipgloss.JoinVertical(lipgloss.Top, hdr, msgs, inp)
 
 	if m.sidebar {
-		return lipgloss.JoinHorizontal(lipgloss.Top, mainCol, m.sideView())
+		return lipgloss.JoinHorizontal(lipgloss.Top,
+			lipgloss.NewStyle().Height(m.h).Width(mw).Render(mainCol),
+			m.sideView(),
+		)
 	}
 	return mainCol
 }
