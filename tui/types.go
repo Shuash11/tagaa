@@ -10,10 +10,11 @@ import (
 type provider struct{ id, label string }
 
 type agentCfg struct {
-	Name     string `json:"name"`
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
-	Enabled  bool   `json:"enabled"`
+	Name           string `json:"name"`
+	Provider       string `json:"provider"`
+	Model          string `json:"model"`
+	Enabled        bool   `json:"enabled"`
+	IsOrchestrator bool   `json:"is_orchestrator"`
 }
 
 type MsgKind int

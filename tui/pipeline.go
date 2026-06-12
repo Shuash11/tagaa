@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -17,6 +18,8 @@ type Pipeline struct {
 	state           PipelineState
 	vote            *VoteResult
 	executionOutput string
+	orchestrator    agentCfg
+	workers         []agentCfg
 }
 
 func NewPipeline(agents []agentCfg, apiKeys map[string]string) *Pipeline {
@@ -29,10 +32,15 @@ func NewPipeline(agents []agentCfg, apiKeys map[string]string) *Pipeline {
 func (p *Pipeline) Run(ctx context.Context, task string, ch chan<- pipelineBatchMsg) {
 	defer close(ch)
 
-p.state.Intake = PhaseActive
+	p.state.Intake = PhaseActive
 	ch <- p.batch("intake", p.runIntakePhase(task))
 	p.state.Intake = PhaseComplete
 	if ctx.Err() != nil {
+		return
+	}
+
+	if p.orchestrator.Name != "" && len(p.workers) > 0 {
+		p.runOrchestrated(ctx, task, ch)
 		return
 	}
 
@@ -154,6 +162,117 @@ func (p *Pipeline) runChatResponse(ctx context.Context, task string) []Message {
 	}
 
 	msgs = append(msgs, Message{Kind: MsgAgent, AgentName: agent.Name, Content: text, Color: p.agentColor(agent.Name)})
+	msgs = append(msgs, Message{Kind: MsgSystem, Content: ""})
+	return msgs
+}
+
+func (p *Pipeline) runOrchestrated(ctx context.Context, task string, ch chan<- pipelineBatchMsg) {
+	p.state.Planning = PhaseActive
+	ch <- p.batch("planning", p.runOrchPlanPhase(ctx, task))
+	p.state.Planning = PhaseComplete
+	if ctx.Err() != nil {
+		return
+	}
+
+	p.state.PlanVote = PhaseComplete
+	p.state.ExecVote = PhaseComplete
+
+	p.state.Execution = PhaseActive
+	ch <- p.batch("execution", p.runOrchExecPhase(ctx))
+	p.state.Execution = PhaseComplete
+	if ctx.Err() != nil {
+		return
+	}
+
+	p.state.Review = PhaseActive
+	ch <- p.batch("review", p.runOrchReviewPhase(ctx))
+	p.state.Review = PhaseComplete
+}
+
+func (p *Pipeline) runOrchPlanPhase(ctx context.Context, task string) []Message {
+	var msgs []Message
+	msgs = append(msgs, Message{Kind: MsgPhaseDivider, Content: " ORCH. PLAN "})
+	msgs = append(msgs, Message{Kind: MsgSystem, Content: "Orchestrator: " + p.orchestrator.Name + " is creating a plan..."})
+
+	workerNames := ""
+	for i, w := range p.workers {
+		if i > 0 {
+			workerNames += ", "
+		}
+		workerNames += w.Name + " (model: " + w.Model + ")"
+	}
+
+	system := "You are the orchestrator. Break the task into subtasks and assign each to the most suitable worker."
+	userMsg := fmt.Sprintf("Task: %s\n\nAvailable workers:\n%s\n\nCreate a plan with SUBTASK: <worker_name> sections. Be specific about what each worker should do.",
+		task, workerNames)
+	userMsg += p.conversationContext(5)
+
+	text, err := queryAgentSimple(ctx, p.orchestrator, p.apiKeys, system, userMsg)
+	if err != nil {
+		msgs = append(msgs, Message{Kind: MsgError, Content: p.orchestrator.Name + ": " + err.Error()})
+		msgs = append(msgs, Message{Kind: MsgSystem, Content: ""})
+		return msgs
+	}
+
+	msgs = append(msgs, Message{Kind: MsgPlan, AgentName: p.orchestrator.Name, Content: text, Color: p.agentColor(p.orchestrator.Name)})
+	msgs = append(msgs, Message{Kind: MsgSystem, Content: ""})
+	return msgs
+}
+
+func (p *Pipeline) runOrchExecPhase(ctx context.Context) []Message {
+	var msgs []Message
+	msgs = append(msgs, Message{Kind: MsgPhaseDivider, Content: " WORKERS EXEC "})
+
+	type workerResult struct {
+		name string
+		clr  lipgloss.Color
+		text string
+		err  error
+	}
+
+	ch := make(chan workerResult, len(p.workers))
+	for _, w := range p.workers {
+		go func(agent agentCfg) {
+			system := "You are a worker agent. Execute your assigned subtask. Be thorough and provide clear output."
+			userMsg := "Execute your part of the plan. Provide your implementation or answer."
+			text, err := queryAgentSimple(ctx, agent, p.apiKeys, system, userMsg)
+			ch <- workerResult{name: agent.Name, clr: p.agentColor(agent.Name), text: text, err: err}
+		}(w)
+	}
+
+	for range p.workers {
+		r := <-ch
+		if r.err != nil {
+			msgs = append(msgs, Message{Kind: MsgError, Content: r.name + ": " + r.err.Error()})
+			continue
+		}
+		msgs = append(msgs, Message{Kind: MsgAgent, AgentName: r.name, Content: r.text, Color: r.clr})
+		msgs = append(msgs, Message{Kind: MsgSystem, Content: ""})
+	}
+	return msgs
+}
+
+func (p *Pipeline) runOrchReviewPhase(ctx context.Context) []Message {
+	var msgs []Message
+	msgs = append(msgs, Message{Kind: MsgPhaseDivider, Content: " ORCH. REVIEW "})
+
+	if len(p.workers) == 0 {
+		msgs = append(msgs, Message{Kind: MsgSystem, Content: "No workers to review."})
+		msgs = append(msgs, Message{Kind: MsgSystem, Content: ""})
+		return msgs
+	}
+
+	system := "You are the orchestrator. Review all worker outputs, combine them into a final response, and provide feedback."
+	userMsg := "Review the execution outputs from all workers. Combine their work into a cohesive final result. Note any gaps or issues."
+
+	text, err := queryAgentSimple(ctx, p.orchestrator, p.apiKeys, system, userMsg)
+	if err != nil {
+		msgs = append(msgs, Message{Kind: MsgError, Content: p.orchestrator.Name + ": " + err.Error()})
+		msgs = append(msgs, Message{Kind: MsgSystem, Content: ""})
+		return msgs
+	}
+
+	msgs = append(msgs, Message{Kind: MsgReview, AgentName: p.orchestrator.Name, Content: text, Color: p.agentColor(p.orchestrator.Name)})
 	msgs = append(msgs, Message{Kind: MsgSystem, Content: ""})
 	return msgs
 }

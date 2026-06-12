@@ -453,7 +453,11 @@ func (m model) sideView() string {
 			} else {
 				prefix = "  "
 			}
-			pad(fmt.Sprintf("%s%s", prefix, a.Name))
+			role := ""
+			if a.IsOrchestrator {
+				role = "★ "
+			}
+			pad(fmt.Sprintf("%s%s%s", prefix, role, a.Name))
 			pad(lipgloss.NewStyle().Foreground(muteC).Width(18).Render(fmt.Sprintf("    %s", pName)))
 			pad(lipgloss.NewStyle().Foreground(muteC).Width(18).Render(fmt.Sprintf("    %s", modName)))
 		}
