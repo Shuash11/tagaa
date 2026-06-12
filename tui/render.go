@@ -491,6 +491,7 @@ func (m model) sideView() string {
 
 	return lipgloss.NewStyle().
 		Width(22).
+		Height(m.h).
 		Background(sbarBg).
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderLeft(true).
