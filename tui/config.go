@@ -9,7 +9,22 @@ import (
 const configFile = "tagaa.config.json"
 
 func saveConfig(m model) {
-	data := savedConfig{APIKeys: m.apiKeys, Agents: m.agents}
+	apiKeys := make(map[string]string, len(m.apiKeys))
+	for k, v := range m.apiKeys {
+		if k == "gemini" {
+			apiKeys["google"] = v
+		} else {
+			apiKeys[k] = v
+		}
+	}
+	agents := make([]agentCfg, len(m.agents))
+	for i, a := range m.agents {
+		agents[i] = a
+		if a.Provider == "gemini" {
+			agents[i].Provider = "google"
+		}
+	}
+	data := savedConfig{APIKeys: apiKeys, Agents: agents}
 	b, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return

@@ -182,7 +182,7 @@ export type SessionLogEntry = z.infer<typeof SessionLogEntrySchema>;
 
 export const AgentConfigSchema = z.object({
   name: z.string(),
-  provider: z.enum(["anthropic", "openai", "google", "mistral", "deepseek", "xai", "nvidia"]),
+  provider: z.enum(["anthropic", "openai", "google", "mistral", "deepseek", "xai", "nvidia", "groq", "together", "openrouter", "cohere"]),
   model: z.string(),
   specialty: z.string(),
   color: z.string(),
@@ -244,6 +244,10 @@ export const ConfigSchema = z.object({
     deepseek: z.string().optional(),
     xai: z.string().optional(),
     nvidia: z.string().optional(),
+    groq: z.string().optional(),
+    together: z.string().optional(),
+    openrouter: z.string().optional(),
+    cohere: z.string().optional(),
   }),
   voting: VotingConfigSchema,
   execution: ExecutionConfigSchema,
