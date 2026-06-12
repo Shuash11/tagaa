@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -34,6 +35,16 @@ func (p *Pipeline) Run(ctx context.Context, task string, ch chan<- pipelineBatch
 	ch <- p.batch("intake", p.runIntakePhase(task))
 	p.state.Intake = PhaseComplete
 	if ctx.Err() != nil {
+		return
+	}
+
+	if !isTaskRequest(task) {
+		p.state.Planning = PhaseComplete
+		p.state.PlanVote = PhaseComplete
+		p.state.ExecVote = PhaseComplete
+		p.state.Execution = PhaseComplete
+		p.state.Review = PhaseComplete
+		ch <- p.batch("chat", p.runChatResponse(ctx, task))
 		return
 	}
 
@@ -85,6 +96,55 @@ func (p *Pipeline) runIntakePhase(task string) []Message {
 			msgs = append(msgs, Message{Kind: MsgSystem, Content: "  " + f})
 		}
 	}
+	if !isTaskRequest(task) {
+		msgs = append(msgs, Message{Kind: MsgSystem, Content: "Detected: chat message → direct response"})
+	}
+	msgs = append(msgs, Message{Kind: MsgSystem, Content: ""})
+	return msgs
+}
+
+func isTaskRequest(task string) bool {
+	taskWords := []string{
+		"edit", "change", "modify", "update", "refactor",
+		"add", "create", "implement", "build", "make",
+		"fix", "bug", "error", "crash", "broken",
+		"write", "code", "function", "class", "test",
+		"deploy", "run", "execute", "command",
+		"search", "find", "look", "check", "review",
+		"optimize", "improve", "restructure", "rename",
+		"remove", "delete", "clean", "migrate", "convert",
+		"config", "setup", "install", "configure",
+		"debug", "trace", "profile", "benchmark",
+		"pull request", "commit", "push", "merge",
+	}
+	lower := strings.ToLower(task)
+	for _, w := range taskWords {
+		if strings.Contains(lower, w) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Pipeline) runChatResponse(ctx context.Context, task string) []Message {
+	var msgs []Message
+	msgs = append(msgs, Message{Kind: MsgPhaseDivider, Content: " CHAT "})
+
+	if len(p.agents) == 0 {
+		msgs = append(msgs, Message{Kind: MsgError, Content: "No agents available"})
+		return msgs
+	}
+
+	agent := p.agents[0]
+	system := "You are a helpful AI assistant. Be conversational and concise."
+	text, err := queryAgentSimple(ctx, agent, p.apiKeys, system, task)
+	if err != nil {
+		msgs = append(msgs, Message{Kind: MsgError, Content: agent.Name + ": " + err.Error()})
+		msgs = append(msgs, Message{Kind: MsgSystem, Content: ""})
+		return msgs
+	}
+
+	msgs = append(msgs, Message{Kind: MsgAgent, AgentName: agent.Name, Content: text, Color: p.agentColor(agent.Name)})
 	msgs = append(msgs, Message{Kind: MsgSystem, Content: ""})
 	return msgs
 }

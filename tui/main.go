@@ -351,7 +351,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 
-				m.pendingAgents = nil
+m.pendingAgents = nil
 				m.agentResponses = nil
 				m.pipelineCh = make(chan pipelineBatchMsg, 10)
 				m.isRunning = true
