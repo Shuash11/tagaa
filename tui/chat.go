@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -110,53 +108,6 @@ func (m model) nextAgentName() string {
 	return ""
 }
 
-var writeFileTool = map[string]interface{}{
-	"type": "function",
-	"function": map[string]interface{}{
-		"name":        "write_file",
-		"description": "Write content to a file at the specified path. Creates parent directories if they don't exist.",
-		"parameters": map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"path": map[string]interface{}{
-					"type":        "string",
-					"description": "Full file path to write to (e.g. C:\\projects\\tae\\essay.txt)",
-				},
-				"content": map[string]interface{}{
-					"type":        "string",
-					"description": "Content to write to the file",
-				},
-			},
-			"required": []interface{}{"path", "content"},
-		},
-	},
-}
-
-func executeToolCall(name string, argsJSON string) (result string) {
-	var args map[string]interface{}
-	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return fmt.Sprintf("Failed to parse tool arguments: %v", err)
-	}
-	switch name {
-	case "write_file":
-		path, _ := args["path"].(string)
-		content, _ := args["content"].(string)
-		if path == "" {
-			return "Missing 'path' argument"
-		}
-		dir := filepath.Dir(path)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Sprintf("Failed to create directory %s: %v", dir, err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			return fmt.Sprintf("Failed to write file %s: %v", path, err)
-		}
-		return fmt.Sprintf("Successfully wrote %d bytes to %s", len(content), path)
-	default:
-		return fmt.Sprintf("Unknown tool: %s", name)
-	}
-}
-
 func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 	var agent agentCfg
 	found := false
@@ -211,14 +162,31 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 	}
 	key := m.apiKeys[agent.Provider]
 
-	type chatMsg struct {
+	// Build initial conversation messages from m.messages
+	type openAIMsg struct {
 		Role       string     `json:"role"`
 		Content    string     `json:"content,omitempty"`
 		ToolCallID string     `json:"tool_call_id,omitempty"`
 		ToolCalls  []toolCall `json:"tool_calls,omitempty"`
 	}
+	type anthropicMsg struct {
+		Role    string      `json:"role"`
+		Content interface{} `json:"content"`
+	}
+	type geminiPart struct {
+		Text             string                 `json:"text,omitempty"`
+		FunctionCall     map[string]interface{} `json:"functionCall,omitempty"`
+		FunctionResponse map[string]interface{} `json:"functionResponse,omitempty"`
+	}
+	type geminiContent struct {
+		Role  string       `json:"role,omitempty"`
+		Parts []geminiPart `json:"parts"`
+	}
+
 	var systemParts []string
-	var apiMsgs []chatMsg
+	var openAIMsgs []openAIMsg
+	var anthropicMsgs []anthropicMsg
+	var geminiMsgs []geminiContent
 	for _, msg := range m.messages {
 		switch msg.Kind {
 		case MsgSystem:
@@ -227,43 +195,41 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 			}
 		case MsgUser:
 			if strings.TrimSpace(msg.Content) != "" {
-				apiMsgs = append(apiMsgs, chatMsg{Role: "user", Content: msg.Content})
+				openAIMsgs = append(openAIMsgs, openAIMsg{Role: "user", Content: msg.Content})
+				anthropicMsgs = append(anthropicMsgs, anthropicMsg{Role: "user", Content: msg.Content})
+				geminiMsgs = append(geminiMsgs, geminiContent{Role: "user", Parts: []geminiPart{{Text: msg.Content}}})
 			}
 		case MsgAgent:
 			if strings.TrimSpace(msg.Content) != "" {
-				apiMsgs = append(apiMsgs, chatMsg{Role: "assistant", Content: msg.Content})
+				openAIMsgs = append(openAIMsgs, openAIMsg{Role: "assistant", Content: msg.Content})
+				anthropicMsgs = append(anthropicMsgs, anthropicMsg{Role: "assistant", Content: msg.Content})
+				geminiMsgs = append(geminiMsgs, geminiContent{Role: "model", Parts: []geminiPart{{Text: msg.Content}}})
 			}
 		}
 	}
 	if len(systemParts) > 0 {
-		apiMsgs = append([]chatMsg{{Role: "system", Content: strings.Join(systemParts, "\n")}}, apiMsgs...)
+		sys := strings.Join(systemParts, "\n")
+		openAIMsgs = append([]openAIMsg{{Role: "system", Content: sys}}, openAIMsgs...)
+		anthropicMsgs = append([]anthropicMsg{{Role: "user", Content: sys}}, anthropicMsgs...)
 	}
 
 	return func() tea.Msg {
 		client := &http.Client{Timeout: 120 * time.Second}
+		toolsCfg := formatToolsForProvider(agent.Provider)
 
 		var reqBody []byte
 		var req *http.Request
 		var err error
 
-		type openAIReq struct {
-			Model     string                   `json:"model"`
-			Messages  []chatMsg                `json:"messages"`
-			MaxTokens int                      `json:"max_tokens,omitempty"`
-			Tools     []map[string]interface{} `json:"tools,omitempty"`
-		}
-
-		if agent.Provider == "anthropic" {
+		switch agent.Provider {
+		case "anthropic":
 			type anthropicReq struct {
-				Model     string    `json:"model"`
-				Messages  []chatMsg `json:"messages"`
-				MaxTokens int       `json:"max_tokens"`
+				Model     string                   `json:"model"`
+				Messages  []anthropicMsg           `json:"messages"`
+				MaxTokens int                      `json:"max_tokens"`
+				Tools     []map[string]interface{} `json:"tools,omitempty"`
 			}
-			reqBody, _ = json.Marshal(anthropicReq{
-				Model:     agent.Model,
-				Messages:  apiMsgs,
-				MaxTokens: 4096,
-			})
+			reqBody, _ = json.Marshal(anthropicReq{Model: agent.Model, Messages: anthropicMsgs, MaxTokens: 4096, Tools: toolsCfg.([]map[string]interface{})})
 			req, err = http.NewRequestWithContext(ctx, "POST", base+"/v1/messages", strings.NewReader(string(reqBody)))
 			if err != nil {
 				return chatErrMsg{content: err.Error()}
@@ -271,31 +237,28 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 			req.Header.Set("x-api-key", key)
 			req.Header.Set("anthropic-version", "2023-06-01")
 			req.Header.Set("Content-Type", "application/json")
-		} else if agent.Provider == "gemini" {
-			type geminiPart struct {
-				Text string `json:"text"`
-			}
-			type geminiContent struct {
-				Parts []geminiPart `json:"parts"`
-			}
+
+		case "gemini":
 			type geminiReq struct {
-				Contents []geminiContent `json:"contents"`
+				Contents []geminiContent          `json:"contents"`
+				Tools    []map[string]interface{} `json:"tools,omitempty"`
 			}
-			var geminiMsgs []geminiContent
-			for _, m := range apiMsgs {
-				if strings.TrimSpace(m.Content) != "" {
-					geminiMsgs = append(geminiMsgs, geminiContent{Parts: []geminiPart{{Text: m.Content}}})
-				}
-			}
-			reqBody, _ = json.Marshal(geminiReq{Contents: geminiMsgs})
+			reqBody, _ = json.Marshal(geminiReq{Contents: geminiMsgs, Tools: toolsCfg.([]map[string]interface{})})
 			url := fmt.Sprintf("%s/v1/models/%s:generateContent?key=%s", base, agent.Model, key)
 			req, err = http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(reqBody)))
 			if err != nil {
 				return chatErrMsg{content: err.Error()}
 			}
 			req.Header.Set("Content-Type", "application/json")
-		} else {
-			reqBody, _ = json.Marshal(openAIReq{Model: agent.Model, Messages: apiMsgs, MaxTokens: 4096, Tools: []map[string]interface{}{writeFileTool}})
+
+		default:
+			type openAIReq struct {
+				Model     string                   `json:"model"`
+				Messages  []openAIMsg              `json:"messages"`
+				MaxTokens int                      `json:"max_tokens,omitempty"`
+				Tools     []map[string]interface{} `json:"tools,omitempty"`
+			}
+			reqBody, _ = json.Marshal(openAIReq{Model: agent.Model, Messages: openAIMsgs, MaxTokens: 4096, Tools: toolsCfg.([]map[string]interface{})})
 			req, err = http.NewRequestWithContext(ctx, "POST", base+"/v1/chat/completions", strings.NewReader(string(reqBody)))
 			if err != nil {
 				return chatErrMsg{content: err.Error()}
@@ -309,126 +272,140 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 			return chatErrMsg{content: err.Error()}
 		}
 		defer resp.Body.Close()
-
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return chatErrMsg{content: err.Error()}
 		}
-
 		if resp.StatusCode >= 400 {
 			short := fmt.Sprintf("HTTP %d", resp.StatusCode)
-			if resp.StatusCode == 401 {
+			switch resp.StatusCode {
+			case 401:
 				short += " Invalid API key"
-			} else if resp.StatusCode == 403 {
+			case 403:
 				short += " Access denied"
-			} else if resp.StatusCode == 429 {
+			case 429:
 				short += " Rate limited"
-			} else if resp.StatusCode >= 500 {
-				short += " Server error"
-			} else {
-				short += " Error"
+			default:
+				if resp.StatusCode >= 500 {
+					short += " Server error"
+				} else {
+					short += " Error"
+				}
 			}
 			return chatErrMsg{content: short}
 		}
 
-		if agent.Provider == "anthropic" {
-			var anthropicResp struct {
-				Content []struct {
-					Text string `json:"text"`
-				} `json:"content"`
+		// Check for tool calls using the unified parser
+		calls := parseToolCalls(agent.Provider, body)
+		if len(calls) == 0 {
+			content := extractFinalText(agent.Provider, body)
+			if content == "" {
+				return chatErrMsg{content: "Empty response"}
 			}
-			if err := json.Unmarshal(body, &anthropicResp); err != nil {
-				return chatErrMsg{content: "Failed to parse Anthropic response"}
-			}
-			if len(anthropicResp.Content) > 0 {
-				return chatRespMsg{agentName: agent.Name, content: anthropicResp.Content[0].Text, provider: agent.Provider}
-			}
-			return chatErrMsg{content: "Empty Anthropic response"}
+			return chatRespMsg{agentName: agent.Name, content: content, provider: agent.Provider}
 		}
 
-		if agent.Provider == "gemini" {
-			var geminiResp struct {
-				Candidates []struct {
-					Content struct {
-						Parts []struct {
-							Text string `json:"text"`
-						} `json:"parts"`
-					} `json:"content"`
-				} `json:"candidates"`
-			}
-			if err := json.Unmarshal(body, &geminiResp); err != nil {
-				return chatErrMsg{content: "Failed to parse Gemini response"}
-			}
-			if len(geminiResp.Candidates) > 0 && len(geminiResp.Candidates[0].Content.Parts) > 0 {
-				return chatRespMsg{agentName: agent.Name, content: geminiResp.Candidates[0].Content.Parts[0].Text, provider: agent.Provider}
-			}
-			return chatErrMsg{content: "Empty Gemini response"}
-		}
-
-		var openAIResp struct {
-			Choices []struct {
-				Message struct {
-					Content   string     `json:"content"`
-					ToolCalls []toolCall `json:"tool_calls"`
-				} `json:"message"`
-			} `json:"choices"`
-		}
-		if err := json.Unmarshal(body, &openAIResp); err != nil {
-			return chatErrMsg{content: "Failed to parse response"}
-		}
-		if len(openAIResp.Choices) == 0 {
-			return chatErrMsg{content: "Empty response"}
-		}
-		msg := openAIResp.Choices[0].Message
-		if len(msg.ToolCalls) == 0 {
-			return chatRespMsg{agentName: agent.Name, content: msg.Content, provider: agent.Provider}
-		}
-
-		// Tool calls present — execute each one and make a follow-up API call
+		// Tool calls present — execute and follow up
 		var toolSummary string
-		for _, tc := range msg.ToolCalls {
+		for _, tc := range calls {
 			result := executeToolCall(tc.Function.Name, tc.Function.Arguments)
-			apiMsgs = append(apiMsgs, chatMsg{Role: "assistant", ToolCalls: []toolCall{tc}})
-			apiMsgs = append(apiMsgs, chatMsg{Role: "tool", ToolCallID: tc.ID, Content: result})
+			switch agent.Provider {
+			case "anthropic":
+				var argsRaw interface{}
+				json.Unmarshal([]byte(tc.Function.Arguments), &argsRaw)
+				anthropicMsgs = append(anthropicMsgs, anthropicMsg{
+					Role: "assistant",
+					Content: []interface{}{
+						map[string]interface{}{"type": "tool_use", "id": tc.ID, "name": tc.Function.Name, "input": argsRaw},
+					},
+				})
+				anthropicMsgs = append(anthropicMsgs, anthropicMsg{
+					Role: "user",
+					Content: []interface{}{
+						map[string]interface{}{"type": "tool_result", "tool_use_id": tc.ID, "content": result},
+					},
+				})
+			case "gemini":
+				var argsRaw map[string]interface{}
+				json.Unmarshal([]byte(tc.Function.Arguments), &argsRaw)
+				geminiMsgs = append(geminiMsgs, geminiContent{
+					Role: "model",
+					Parts: []geminiPart{{FunctionCall: map[string]interface{}{"name": tc.Function.Name, "args": argsRaw}}},
+				})
+				geminiMsgs = append(geminiMsgs, geminiContent{
+					Role: "function",
+					Parts: []geminiPart{{FunctionResponse: map[string]interface{}{"name": tc.Function.Name, "response": map[string]interface{}{"result": result}}}},
+				})
+			default:
+				openAIMsgs = append(openAIMsgs, openAIMsg{Role: "assistant", ToolCalls: []toolCall{tc}})
+				openAIMsgs = append(openAIMsgs, openAIMsg{Role: "tool", ToolCallID: tc.ID, Content: result})
+			}
 			if strings.HasPrefix(result, "Successfully") {
 				toolSummary = result
 			}
 		}
-		reqBody2, _ := json.Marshal(openAIReq{Model: agent.Model, Messages: apiMsgs, MaxTokens: 4096})
-		req2, err := http.NewRequestWithContext(ctx, "POST", base+"/v1/chat/completions", strings.NewReader(string(reqBody2)))
+
+		// Follow-up request
+		switch agent.Provider {
+		case "anthropic":
+			type anthropicReq struct {
+				Model     string         `json:"model"`
+				Messages  []anthropicMsg `json:"messages"`
+				MaxTokens int            `json:"max_tokens"`
+			}
+			reqBody, _ = json.Marshal(anthropicReq{Model: agent.Model, Messages: anthropicMsgs, MaxTokens: 4096})
+			req, err = http.NewRequestWithContext(ctx, "POST", base+"/v1/messages", strings.NewReader(string(reqBody)))
+			req.Header.Set("x-api-key", key)
+			req.Header.Set("anthropic-version", "2023-06-01")
+			req.Header.Set("Content-Type", "application/json")
+		case "gemini":
+			type geminiReq struct {
+				Contents []geminiContent `json:"contents"`
+			}
+			reqBody, _ = json.Marshal(geminiReq{Contents: geminiMsgs})
+			url := fmt.Sprintf("%s/v1/models/%s:generateContent?key=%s", base, agent.Model, key)
+			req, err = http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(reqBody)))
+			req.Header.Set("Content-Type", "application/json")
+		default:
+			type openAIReq struct {
+				Model     string      `json:"model"`
+				Messages  []openAIMsg `json:"messages"`
+				MaxTokens int         `json:"max_tokens,omitempty"`
+			}
+			reqBody, _ = json.Marshal(openAIReq{Model: agent.Model, Messages: openAIMsgs, MaxTokens: 4096})
+			req, err = http.NewRequestWithContext(ctx, "POST", base+"/v1/chat/completions", strings.NewReader(string(reqBody)))
+			req.Header.Set("Authorization", "Bearer "+key)
+			req.Header.Set("Content-Type", "application/json")
+		}
 		if err != nil {
+			if toolSummary != "" {
+				return chatRespMsg{agentName: agent.Name, content: toolSummary + "\n\n(Follow-up error)", provider: agent.Provider, toolResult: toolSummary}
+			}
 			return chatErrMsg{content: "Follow-up request failed: " + err.Error()}
 		}
-		req2.Header.Set("Authorization", "Bearer "+key)
-		req2.Header.Set("Content-Type", "application/json")
-		resp2, err := client.Do(req2)
+
+		resp2, err := client.Do(req)
 		if err != nil {
+			if toolSummary != "" {
+				return chatRespMsg{agentName: agent.Name, content: toolSummary + "\n\n(Follow-up failed)", provider: agent.Provider, toolResult: toolSummary}
+			}
 			return chatErrMsg{content: "Follow-up call failed: " + err.Error()}
 		}
 		defer resp2.Body.Close()
 		body2, err := io.ReadAll(resp2.Body)
 		if err != nil {
+			if toolSummary != "" {
+				return chatRespMsg{agentName: agent.Name, content: toolSummary + "\n\n(Read error)", provider: agent.Provider, toolResult: toolSummary}
+			}
 			return chatErrMsg{content: "Failed to read follow-up response"}
 		}
-		var openAIResp2 struct {
-			Choices []struct {
-				Message struct {
-					Content string `json:"content"`
-				} `json:"message"`
-			} `json:"choices"`
-		}
-		if err := json.Unmarshal(body2, &openAIResp2); err != nil {
-			if toolSummary != "" {
-				return chatRespMsg{agentName: agent.Name, content: toolSummary + "\n\n(Parse error on follow-up)", provider: agent.Provider, toolResult: toolSummary}
-			}
-			return chatErrMsg{content: "Failed to parse follow-up response"}
-		}
-		if len(openAIResp2.Choices) > 0 {
-			return chatRespMsg{agentName: agent.Name, content: openAIResp2.Choices[0].Message.Content, provider: agent.Provider, toolResult: toolSummary}
-		}
-		if toolSummary != "" {
+		content := extractFinalText(agent.Provider, body2)
+		if content == "" && toolSummary != "" {
 			return chatRespMsg{agentName: agent.Name, content: toolSummary, provider: agent.Provider, toolResult: toolSummary}
 		}
-		return chatErrMsg{content: "Empty follow-up response"}
+		if content == "" {
+			return chatErrMsg{content: "Empty follow-up response"}
+		}
+		return chatRespMsg{agentName: agent.Name, content: content, provider: agent.Provider, toolResult: toolSummary}
 	}
 }

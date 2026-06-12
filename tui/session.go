@@ -84,3 +84,30 @@ func loadLatestSession() (int, string, []Message) {
 	}
 	return last.ID, last.Timestamp, msgs
 }
+
+func loadAllSessions() SessionsFile {
+	var sf SessionsFile
+	b, err := os.ReadFile(sessionFile)
+	if err != nil {
+		return sf
+	}
+	json.Unmarshal(b, &sf)
+	return sf
+}
+
+func deleteSession(id int) {
+	sf := loadAllSessions()
+	idx := -1
+	for i, s := range sf.Sessions {
+		if s.ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return
+	}
+	sf.Sessions = append(sf.Sessions[:idx], sf.Sessions[idx+1:]...)
+	b, _ := json.MarshalIndent(sf, "", "  ")
+	os.WriteFile(sessionFile, b, 0600)
+}

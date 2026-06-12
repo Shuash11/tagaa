@@ -65,6 +65,9 @@ type model struct {
 	cancelFn      context.CancelFunc
 	streamText    string
 	streamPos     int
+	cmdMode       bool
+	cmdCur        int
+	cmdSessions   []Session
 	w, h          int
 	ready         bool
 }
