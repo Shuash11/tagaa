@@ -121,7 +121,7 @@ func sendGroupThinkCmd(m model, ctx context.Context) tea.Cmd {
 			msg = msg[:117] + "..."
 		}
 		return func() tea.Msg {
-			return chatErrMsg{content: msg}
+			return chatErrMsg{content: msg + "\n  → Press Ctrl+S to add an API key and configure an agent"}
 		}
 	}
 
@@ -133,10 +133,23 @@ func sendGroupThinkCmd(m model, ctx context.Context) tea.Cmd {
 		}
 	}
 
+	if !isTaskRequest(task) && len(agents) > 0 {
+		a := agents[0]
+		return func() tea.Msg {
+			text, err := queryAgentSimple(ctx, a, m.apiKeys, "You are a helpful AI assistant. Be conversational and concise.", task)
+			if err != nil {
+				return chatErrMsg{agentName: a.Name, content: err.Error()}
+			}
+			return chatRespMsg{agentName: a.Name, content: text, provider: a.Provider}
+		}
+	}
+
 	ch := m.pipelineCh
 	go func() {
 		p := NewPipeline(agents, m.apiKeys)
-		p.history = m.messages
+		historyCopy := make([]Message, len(m.messages))
+		copy(historyCopy, m.messages)
+		p.history = historyCopy
 		p.Run(ctx, task, ch)
 	}()
 	return pipelinePollCmd(ch)
@@ -154,266 +167,4 @@ func pipelinePollCmd(ch chan pipelineBatchMsg) tea.Cmd {
 			return pipelineTickMsg{}
 		}
 	})
-}
-
-func sendSingleAgentCmd(m model, ctx context.Context, agent agentCfg) tea.Cmd {
-	base, ok := baseURLs[agent.Provider]
-	if !ok {
-		return func() tea.Msg {
-			return chatErrMsg{agentName: agent.Name, content: "Unknown provider: " + agent.Provider}
-		}
-	}
-	key := m.apiKeys[agent.Provider]
-
-	// Build initial conversation messages from m.messages
-	type openAIMsg struct {
-		Role       string     `json:"role"`
-		Content    string     `json:"content,omitempty"`
-		ToolCallID string     `json:"tool_call_id,omitempty"`
-		ToolCalls  []toolCall `json:"tool_calls,omitempty"`
-	}
-	type anthropicMsg struct {
-		Role    string      `json:"role"`
-		Content interface{} `json:"content"`
-	}
-	type geminiPart struct {
-		Text             string                 `json:"text,omitempty"`
-		FunctionCall     map[string]interface{} `json:"functionCall,omitempty"`
-		FunctionResponse map[string]interface{} `json:"functionResponse,omitempty"`
-	}
-	type geminiContent struct {
-		Role  string       `json:"role,omitempty"`
-		Parts []geminiPart `json:"parts"`
-	}
-
-	var systemString string
-	var systemParts []string
-	var openAIMsgs []openAIMsg
-	var anthropicMsgs []anthropicMsg
-	var geminiMsgs []geminiContent
-	for _, msg := range m.messages {
-		switch msg.Kind {
-		case MsgSystem:
-			if strings.TrimSpace(msg.Content) != "" {
-				systemParts = append(systemParts, msg.Content)
-			}
-		case MsgUser:
-			if strings.TrimSpace(msg.Content) != "" {
-				openAIMsgs = append(openAIMsgs, openAIMsg{Role: "user", Content: msg.Content})
-				anthropicMsgs = append(anthropicMsgs, anthropicMsg{Role: "user", Content: msg.Content})
-				geminiMsgs = append(geminiMsgs, geminiContent{Role: "user", Parts: []geminiPart{{Text: msg.Content}}})
-			}
-		case MsgAgent:
-			if strings.TrimSpace(msg.Content) != "" {
-				openAIMsgs = append(openAIMsgs, openAIMsg{Role: "assistant", Content: msg.Content})
-				anthropicMsgs = append(anthropicMsgs, anthropicMsg{Role: "assistant", Content: msg.Content})
-				geminiMsgs = append(geminiMsgs, geminiContent{Role: "model", Parts: []geminiPart{{Text: msg.Content}}})
-			}
-		}
-	}
-	if m.thinking {
-		systemParts = append([]string{"You are a thorough, step-by-step thinker. Always reason through problems carefully before answering. Show your chain of thought."}, systemParts...)
-	}
-	if len(systemParts) > 0 {
-		systemString = strings.Join(systemParts, "\n")
-		openAIMsgs = append([]openAIMsg{{Role: "system", Content: systemString}}, openAIMsgs...)
-	}
-
-	return func() tea.Msg {
-		client := &http.Client{Timeout: 120 * time.Second}
-		toolsCfg := formatToolsForProvider(agent.Provider)
-
-		var reqBody []byte
-		var req *http.Request
-		var err error
-
-		switch agent.Provider {
-		case "anthropic":
-			type anthropicReq struct {
-				Model     string                   `json:"model"`
-				System    string                   `json:"system,omitempty"`
-				Messages  []anthropicMsg           `json:"messages"`
-				MaxTokens int                      `json:"max_tokens"`
-				Tools     []map[string]interface{} `json:"tools,omitempty"`
-			}
-			reqBody, _ = json.Marshal(anthropicReq{Model: agent.Model, System: systemString, Messages: anthropicMsgs, MaxTokens: 4096, Tools: toolsCfg.([]map[string]interface{})})
-			req, err = http.NewRequestWithContext(ctx, "POST", base+"/v1/messages", strings.NewReader(string(reqBody)))
-			if err != nil {
-				return chatErrMsg{agentName: agent.Name, content: err.Error()}
-			}
-			req.Header.Set("x-api-key", key)
-			req.Header.Set("anthropic-version", "2023-06-01")
-			req.Header.Set("Content-Type", "application/json")
-
-		case "gemini":
-			type geminiReq struct {
-				Contents []geminiContent          `json:"contents"`
-				Tools    []map[string]interface{} `json:"tools,omitempty"`
-			}
-			reqBody, _ = json.Marshal(geminiReq{Contents: geminiMsgs, Tools: toolsCfg.([]map[string]interface{})})
-			url := fmt.Sprintf("%s/v1/models/%s:generateContent?key=%s", base, agent.Model, key)
-			req, err = http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(reqBody)))
-			if err != nil {
-				return chatErrMsg{agentName: agent.Name, content: err.Error()}
-			}
-			req.Header.Set("Content-Type", "application/json")
-
-		default:
-			type openAIReq struct {
-				Model     string                   `json:"model"`
-				Messages  []openAIMsg              `json:"messages"`
-				MaxTokens int                      `json:"max_tokens,omitempty"`
-				Tools     []map[string]interface{} `json:"tools,omitempty"`
-			}
-			reqBody, _ = json.Marshal(openAIReq{Model: agent.Model, Messages: openAIMsgs, MaxTokens: 4096, Tools: toolsCfg.([]map[string]interface{})})
-			req, err = http.NewRequestWithContext(ctx, "POST", base+"/v1/chat/completions", strings.NewReader(string(reqBody)))
-			if err != nil {
-				return chatErrMsg{agentName: agent.Name, content: err.Error()}
-			}
-			req.Header.Set("Authorization", "Bearer "+key)
-			req.Header.Set("Content-Type", "application/json")
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return chatErrMsg{agentName: agent.Name, content: err.Error()}
-		}
-		defer resp.Body.Close()
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return chatErrMsg{agentName: agent.Name, content: err.Error()}
-		}
-		if resp.StatusCode >= 400 {
-			short := fmt.Sprintf("HTTP %d", resp.StatusCode)
-			switch resp.StatusCode {
-			case 401:
-				short += " Invalid API key"
-			case 403:
-				short += " Access denied"
-			case 429:
-				short += " Rate limited"
-			default:
-				if resp.StatusCode >= 500 {
-					short += " Server error"
-				} else {
-					short += " Error"
-				}
-			}
-			return chatErrMsg{agentName: agent.Name, content: short}
-		}
-
-		// Check for tool calls using the unified parser
-		calls := parseToolCalls(agent.Provider, body)
-		if len(calls) == 0 {
-			content := extractFinalText(agent.Provider, body)
-			if content == "" {
-				return chatErrMsg{agentName: agent.Name, content: "Empty response"}
-			}
-			return chatRespMsg{agentName: agent.Name, content: content, provider: agent.Provider}
-		}
-
-		// Tool calls present — execute and follow up
-		var toolSummary string
-		for _, tc := range calls {
-			result := executeToolCall(tc.Function.Name, tc.Function.Arguments)
-			switch agent.Provider {
-			case "anthropic":
-				var argsRaw interface{}
-				json.Unmarshal([]byte(tc.Function.Arguments), &argsRaw)
-				anthropicMsgs = append(anthropicMsgs, anthropicMsg{
-					Role: "assistant",
-					Content: []interface{}{
-						map[string]interface{}{"type": "tool_use", "id": tc.ID, "name": tc.Function.Name, "input": argsRaw},
-					},
-				})
-				anthropicMsgs = append(anthropicMsgs, anthropicMsg{
-					Role: "user",
-					Content: []interface{}{
-						map[string]interface{}{"type": "tool_result", "tool_use_id": tc.ID, "content": result},
-					},
-				})
-			case "gemini":
-				var argsRaw map[string]interface{}
-				json.Unmarshal([]byte(tc.Function.Arguments), &argsRaw)
-				geminiMsgs = append(geminiMsgs, geminiContent{
-					Role: "model",
-					Parts: []geminiPart{{FunctionCall: map[string]interface{}{"name": tc.Function.Name, "args": argsRaw}}},
-				})
-				geminiMsgs = append(geminiMsgs, geminiContent{
-					Role: "function",
-					Parts: []geminiPart{{FunctionResponse: map[string]interface{}{"name": tc.Function.Name, "response": map[string]interface{}{"result": result}}}},
-				})
-			default:
-				openAIMsgs = append(openAIMsgs, openAIMsg{Role: "assistant", ToolCalls: []toolCall{tc}})
-				openAIMsgs = append(openAIMsgs, openAIMsg{Role: "tool", ToolCallID: tc.ID, Content: result})
-			}
-			if strings.HasPrefix(result, "Successfully") {
-				toolSummary = result
-			}
-		}
-
-		// Follow-up request
-		switch agent.Provider {
-		case "anthropic":
-			type anthropicReq struct {
-				Model     string         `json:"model"`
-				System    string         `json:"system,omitempty"`
-				Messages  []anthropicMsg `json:"messages"`
-				MaxTokens int            `json:"max_tokens"`
-			}
-			reqBody, _ = json.Marshal(anthropicReq{Model: agent.Model, System: systemString, Messages: anthropicMsgs, MaxTokens: 4096})
-			req, err = http.NewRequestWithContext(ctx, "POST", base+"/v1/messages", strings.NewReader(string(reqBody)))
-			req.Header.Set("x-api-key", key)
-			req.Header.Set("anthropic-version", "2023-06-01")
-			req.Header.Set("Content-Type", "application/json")
-		case "gemini":
-			type geminiReq struct {
-				Contents []geminiContent `json:"contents"`
-			}
-			reqBody, _ = json.Marshal(geminiReq{Contents: geminiMsgs})
-			url := fmt.Sprintf("%s/v1/models/%s:generateContent?key=%s", base, agent.Model, key)
-			req, err = http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(reqBody)))
-			req.Header.Set("Content-Type", "application/json")
-		default:
-			type openAIReq struct {
-				Model     string      `json:"model"`
-				Messages  []openAIMsg `json:"messages"`
-				MaxTokens int         `json:"max_tokens,omitempty"`
-			}
-			reqBody, _ = json.Marshal(openAIReq{Model: agent.Model, Messages: openAIMsgs, MaxTokens: 4096})
-			req, err = http.NewRequestWithContext(ctx, "POST", base+"/v1/chat/completions", strings.NewReader(string(reqBody)))
-			req.Header.Set("Authorization", "Bearer "+key)
-			req.Header.Set("Content-Type", "application/json")
-		}
-		if err != nil {
-			if toolSummary != "" {
-				return chatRespMsg{agentName: agent.Name, content: toolSummary + "\n\n(Follow-up error)", provider: agent.Provider, toolResult: toolSummary}
-			}
-			return chatErrMsg{agentName: agent.Name, content: "Follow-up request failed: " + err.Error()}
-		}
-
-		resp2, err := client.Do(req)
-		if err != nil {
-			if toolSummary != "" {
-				return chatRespMsg{agentName: agent.Name, content: toolSummary + "\n\n(Follow-up failed)", provider: agent.Provider, toolResult: toolSummary}
-			}
-			return chatErrMsg{agentName: agent.Name, content: "Follow-up call failed: " + err.Error()}
-		}
-		defer resp2.Body.Close()
-		body2, err := io.ReadAll(resp2.Body)
-		if err != nil {
-			if toolSummary != "" {
-				return chatRespMsg{agentName: agent.Name, content: toolSummary + "\n\n(Read error)", provider: agent.Provider, toolResult: toolSummary}
-			}
-			return chatErrMsg{agentName: agent.Name, content: "Failed to read follow-up response"}
-		}
-		content := extractFinalText(agent.Provider, body2)
-		if content == "" && toolSummary != "" {
-			return chatRespMsg{agentName: agent.Name, content: toolSummary, provider: agent.Provider, toolResult: toolSummary}
-		}
-		if content == "" {
-			return chatErrMsg{agentName: agent.Name, content: "Empty follow-up response"}
-		}
-		return chatRespMsg{agentName: agent.Name, content: content, provider: agent.Provider, toolResult: toolSummary}
-	}
 }

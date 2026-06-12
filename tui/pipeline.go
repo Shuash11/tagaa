@@ -9,13 +9,14 @@ import (
 )
 
 type Pipeline struct {
-	phase   PhaseName
-	agents  []agentCfg
-	apiKeys map[string]string
-	history []Message
-	plans   []PlanResponse
-	state   PipelineState
-	vote    *VoteResult
+	phase           PhaseName
+	agents          []agentCfg
+	apiKeys         map[string]string
+	history         []Message
+	plans           []PlanResponse
+	state           PipelineState
+	vote            *VoteResult
+	executionOutput string
 }
 
 func NewPipeline(agents []agentCfg, apiKeys map[string]string) *Pipeline {
@@ -26,10 +27,7 @@ func NewPipeline(agents []agentCfg, apiKeys map[string]string) *Pipeline {
 }
 
 func (p *Pipeline) Run(ctx context.Context, task string, ch chan<- pipelineBatchMsg) {
-	defer func() {
-		ch <- pipelineBatchMsg{done: true, state: p.state}
-		close(ch)
-	}()
+	defer close(ch)
 
 	p.state.Intake = PhaseActive
 	ch <- p.batch("intake", p.runIntakePhase(task))
@@ -52,6 +50,27 @@ func (p *Pipeline) Run(ctx context.Context, task string, ch chan<- pipelineBatch
 	ch <- p.batch("planning", p.runPlanningPhase(ctx, task))
 	p.state.Planning = PhaseComplete
 	if ctx.Err() != nil {
+		return
+	}
+
+	if len(p.agents) == 1 {
+		p.state.PlanVote = PhaseComplete
+		p.state.ExecVote = PhaseComplete
+
+		p.state.Execution = PhaseActive
+		ch <- p.batch("execution", p.runExecutionPhase(ctx))
+		p.state.Execution = PhaseComplete
+		if ctx.Err() != nil {
+			return
+		}
+
+		if p.executionOutput != "" {
+			p.state.Review = PhaseActive
+			ch <- p.batch("review", p.runReviewPhase(ctx))
+			p.state.Review = PhaseComplete
+		} else {
+			p.state.Review = PhaseComplete
+		}
 		return
 	}
 
@@ -104,22 +123,22 @@ func (p *Pipeline) runIntakePhase(task string) []Message {
 }
 
 func isTaskRequest(task string) bool {
-	taskWords := []string{
-		"edit", "change", "modify", "update", "refactor",
-		"add", "create", "implement", "build", "make",
-		"fix", "bug", "error", "crash", "broken",
-		"write", "code", "function", "class", "test",
-		"deploy", "run", "execute", "command",
-		"search", "find", "look", "check", "review",
-		"optimize", "improve", "restructure", "rename",
-		"remove", "delete", "clean", "migrate", "convert",
-		"config", "setup", "install", "configure",
-		"debug", "trace", "profile", "benchmark",
-		"pull request", "commit", "push", "merge",
-	}
 	lower := strings.ToLower(task)
-	for _, w := range taskWords {
-		if strings.Contains(lower, w) {
+	if strings.HasPrefix(lower, "!") {
+		return true
+	}
+	filePatterns := []string{".go", ".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".java", ".c", ".cpp", ".h", ".css", ".yaml", ".yml", ".json", ".md", ".toml", "```"}
+	for _, p := range filePatterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	imperative := []string{
+		"implement ", "refactor ", "fix the bug", "write a ", "create a ",
+		"build a ", "deploy ", "debug ", "optimize ", "configure ",
+	}
+	for _, w := range imperative {
+		if strings.HasPrefix(lower, w) {
 			return true
 		}
 	}
@@ -137,7 +156,8 @@ func (p *Pipeline) runChatResponse(ctx context.Context, task string) []Message {
 
 	agent := p.agents[0]
 	system := "You are a helpful AI assistant. Be conversational and concise."
-	text, err := queryAgentSimple(ctx, agent, p.apiKeys, system, task)
+	userMsg := task + p.conversationContext(5)
+	text, err := queryAgentSimple(ctx, agent, p.apiKeys, system, userMsg)
 	if err != nil {
 		msgs = append(msgs, Message{Kind: MsgError, Content: agent.Name + ": " + err.Error()})
 		msgs = append(msgs, Message{Kind: MsgSystem, Content: ""})
@@ -161,7 +181,7 @@ func (p *Pipeline) runPlanningPhase(ctx context.Context, task string) []Message 
 	for i, agent := range p.agents {
 		go func(a agentCfg, idx int) {
 			system := "You are a technical planning agent. Create a detailed plan for the task. Output a clear summary and numbered steps."
-			text, err := queryAgentSimple(ctx, a, p.apiKeys, system, "Plan this task: "+task)
+			text, err := queryAgentSimple(ctx, a, p.apiKeys, system, "Plan this task: "+task+p.conversationContext(5))
 			ch <- result{name: a.Name, clr: p.agentColor(a.Name), text: text, err: err}
 		}(agent, i)
 	}
@@ -190,9 +210,10 @@ func (p *Pipeline) runPlanVotePhase(ctx context.Context) []Message {
 		"Then explain your reasoning briefly." + p.plansSummary()
 
 	type voteResult struct {
-		voter string
-		vote  string
-		err   error
+		voter   string
+		vote    string
+		rawText string
+		err     error
 	}
 
 	ch := make(chan voteResult, len(p.agents))
@@ -204,7 +225,7 @@ func (p *Pipeline) runPlanVotePhase(ctx context.Context) []Message {
 				return
 			}
 			voted := p.parseVote(text, p.plans)
-			ch <- voteResult{voter: a.Name, vote: voted}
+			ch <- voteResult{voter: a.Name, vote: voted, rawText: text}
 		}(agent)
 	}
 
@@ -217,8 +238,12 @@ func (p *Pipeline) runPlanVotePhase(ctx context.Context) []Message {
 		}
 		if r.vote != "" {
 			scores[r.vote]++
+			reason := ""
+			if r.rawText != "" {
+				reason = extractReasonExcerpt(r.rawText)
+			}
+			entries = append(entries, VoteEntry{Voter: r.voter, VotedFor: r.vote, Reason: reason})
 		}
-		entries = append(entries, VoteEntry{Voter: r.voter, VotedFor: r.vote})
 	}
 
 	winner, maxScore := "", 0.0
@@ -246,9 +271,10 @@ func (p *Pipeline) runExecVotePhase(ctx context.Context) []Message {
 		"Respond with: VOTE: <agent name>" + p.plansSummary()
 
 	type voteResult struct {
-		voter string
-		vote  string
-		err   error
+		voter   string
+		vote    string
+		rawText string
+		err     error
 	}
 
 	ch := make(chan voteResult, len(p.agents))
@@ -260,7 +286,7 @@ func (p *Pipeline) runExecVotePhase(ctx context.Context) []Message {
 				return
 			}
 			voted := p.parseVote(text, p.plans)
-			ch <- voteResult{voter: a.Name, vote: voted}
+			ch <- voteResult{voter: a.Name, vote: voted, rawText: text}
 		}(agent)
 	}
 
@@ -273,8 +299,14 @@ func (p *Pipeline) runExecVotePhase(ctx context.Context) []Message {
 		}
 		if r.vote != "" {
 			scores[r.vote]++
+			reason := "executor selection"
+			if r.rawText != "" {
+				if excerpt := extractReasonExcerpt(r.rawText); excerpt != "" {
+					reason = excerpt
+				}
+			}
+			entries = append(entries, VoteEntry{Voter: r.voter, VotedFor: r.vote, Reason: reason})
 		}
-		entries = append(entries, VoteEntry{Voter: r.voter, VotedFor: r.vote, Reason: "executor selection"})
 	}
 
 	winner, maxScore := "", 0.0
@@ -330,6 +362,7 @@ func (p *Pipeline) runExecutionPhase(ctx context.Context) []Message {
 
 	msgs = append(msgs, Message{Kind: MsgAgent, AgentName: executor, Content: text, Color: p.agentColor(executor)})
 	msgs = append(msgs, Message{Kind: MsgSystem, Content: ""})
+	p.executionOutput = text
 	return msgs
 }
 
@@ -367,6 +400,7 @@ func (p *Pipeline) runReviewPhase(ctx context.Context) []Message {
 			text, err := queryAgentSimple(ctx, agent, p.apiKeys, system,
 				"Review this execution output and provide feedback:\n\n"+
 					"Executor: "+executor+"\n"+
+					"Execution output:\n"+p.executionOutput+"\n\n"+
 					"Plans overview: "+p.plansSummary()+"\n"+
 					"Provide a verdict: pass or needs_fix. List any issues found.")
 			ch <- reviewResult{name: agent.Name, clr: p.agentColor(agent.Name), text: text, err: err}

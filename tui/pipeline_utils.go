@@ -23,6 +23,25 @@ func queryAgentSimple(ctx context.Context, agent agentCfg, apiKeys map[string]st
 		return "", fmt.Errorf("no API key for %s", agent.Provider)
 	}
 
+	const maxRetries = 3
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(1<<(attempt-1)) * time.Second)
+		}
+		content, err := doQuery(ctx, agent, base, key, system, userMsg)
+		if err == nil {
+			return content, nil
+		}
+		lastErr = err
+		if !isRetryable(err) {
+			break
+		}
+	}
+	return "", lastErr
+}
+
+func doQuery(ctx context.Context, agent agentCfg, base, key, system, userMsg string) (string, error) {
 	client := &http.Client{Timeout: 120 * time.Second}
 	var reqBody []byte
 	var req *http.Request
@@ -64,9 +83,11 @@ func queryAgentSimple(ctx context.Context, agent agentCfg, apiKeys map[string]st
 		type geminiReq struct {
 			Contents []geminiContent `json:"contents"`
 		}
-		parts := []geminiPart{{Text: userMsg}}
+		var parts []geminiPart
 		if system != "" {
-			parts = append([]geminiPart{{Text: system + "\n\n" + userMsg}}, parts...)
+			parts = []geminiPart{{Text: system + "\n\n" + userMsg}}
+		} else {
+			parts = []geminiPart{{Text: userMsg}}
 		}
 		reqBody, _ = json.Marshal(geminiReq{Contents: []geminiContent{{Parts: parts}}})
 		url := fmt.Sprintf("%s/v1/models/%s:generateContent?key=%s", base, agent.Model, key)
@@ -124,9 +145,30 @@ func extractFilePaths(s string) []string {
 	var files []string
 	seen := make(map[string]bool)
 	parts := strings.Fields(s)
+	extPatterns := []string{".go", ".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".java", ".c", ".cpp", ".h", ".css", ".yaml", ".yml", ".json", ".md", ".toml", ".txt", ".sh", ".bat", ".ps1", ".xml", ".html", ".htm", ".csv"}
+	rootPatterns := []string{"src/", "tui/", "lib/", "test/", "tests/", "docs/", "config/", "pkg/", "cmd/", "internal/", ".github/", "dist/", "build/", "public/", "static/", "assets/"}
 	for _, part := range parts {
 		part = strings.Trim(part, "\"'(),.;:!?")
-		if strings.Contains(part, "/") || strings.Contains(part, "\\") {
+		hasSep := strings.Contains(part, "/") || strings.Contains(part, "\\")
+		if !hasSep {
+			continue
+		}
+		lower := strings.ToLower(part)
+		hasExt := false
+		for _, ext := range extPatterns {
+			if strings.HasSuffix(lower, ext) {
+				hasExt = true
+				break
+			}
+		}
+		hasRoot := false
+		for _, root := range rootPatterns {
+			if strings.HasPrefix(lower, root) {
+				hasRoot = true
+				break
+			}
+		}
+		if hasExt || hasRoot {
 			if !seen[part] {
 				files = append(files, part)
 				seen[part] = true
@@ -145,19 +187,30 @@ func (p *Pipeline) agentColor(name string) lipgloss.Color {
 	return agentColors[0]
 }
 
+const maxSummaryTotal = 2000
+
 func (p *Pipeline) plansSummary() string {
 	if len(p.plans) == 0 {
 		return "(no plans available)"
 	}
+	perPlan := maxSummaryTotal / len(p.plans)
+	if perPlan < 100 {
+		perPlan = 100
+	}
 	var sb strings.Builder
 	for i, pl := range p.plans {
 		sb.WriteString(fmt.Sprintf("\n--- Plan %d: %s ---\n", i+1, pl.AgentName))
-		sb.WriteString(pl.Plan)
-		if len(pl.Plan) > 800 {
-			sb.WriteString("\n[truncated]")
+		if len(pl.Plan) > perPlan {
+			sb.WriteString(pl.Plan[:perPlan] + "\n[truncated]")
+		} else {
+			sb.WriteString(pl.Plan)
 		}
 	}
-	return sb.String()
+	result := sb.String()
+	if len(result) > maxSummaryTotal {
+		result = result[:maxSummaryTotal] + "\n[total truncated]"
+	}
+	return result
 }
 
 func (p *Pipeline) parseVote(text string, plans []PlanResponse) string {
@@ -176,8 +229,61 @@ func (p *Pipeline) parseVote(text string, plans []PlanResponse) string {
 			return pl.AgentName
 		}
 	}
-	if len(plans) > 0 {
-		return plans[0].AgentName
+	return ""
+}
+
+func extractReasonExcerpt(text string) string {
+	text = strings.TrimSpace(text)
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "VOTE:") || strings.HasPrefix(line, "```") {
+			continue
+		}
+		runes := []rune(line)
+		if len(runes) > 80 {
+			return string(runes[:80]) + "..."
+		}
+		return line
 	}
-	return p.agents[0].Name
+	return ""
+}
+
+func isRetryable(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "429") ||
+		strings.Contains(s, "502") ||
+		strings.Contains(s, "503") ||
+		strings.Contains(s, "504") ||
+		strings.Contains(s, "timeout") ||
+		strings.Contains(s, "connection")
+}
+
+func (p *Pipeline) conversationContext(maxExchanges int) string {
+	if len(p.history) == 0 || maxExchanges <= 0 {
+		return ""
+	}
+	var sb strings.Builder
+	count := 0
+	for i := len(p.history) - 1; i >= 0 && count < maxExchanges; i-- {
+		msg := p.history[i]
+		if msg.Kind == MsgUser || msg.Kind == MsgAgent {
+			prefix := "User"
+			if msg.Kind == MsgAgent {
+				prefix = msg.AgentName
+			}
+			content := msg.Content
+			runes := []rune(content)
+			if len(runes) > 200 {
+				content = string(runes[:200]) + "..."
+			}
+			sb.WriteString(prefix + ": " + content + "\n")
+			count++
+		}
+	}
+	result := sb.String()
+	if result != "" {
+		return "\n\nRecent conversation:\n" + result
+	}
+	return ""
 }
