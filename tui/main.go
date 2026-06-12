@@ -80,7 +80,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
-		if msg.content == "" {
+		if msg.toolResult != "" {
+			m.messages = append(m.messages, Message{Kind: MsgSystem, Content: msg.toolResult})
+			m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
+		}
+		if msg.content == "" && msg.toolResult == "" {
 			m.isRunning = false
 			m.phase = ""
 			m.messages = append(m.messages, Message{Kind: MsgAgent, AgentName: msg.agentName, Content: "(empty response)", Color: clr})

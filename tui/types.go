@@ -76,9 +76,19 @@ type fetchModelsMsg struct {
 }
 
 type chatRespMsg struct {
-	agentName string
-	content   string
-	provider  string
+	agentName  string
+	content    string
+	provider   string
+	toolResult string
+}
+
+type toolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
 }
 
 type chatErrMsg struct {
