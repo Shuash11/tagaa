@@ -35,7 +35,7 @@ func initialModel() model {
 		models:        make(map[string][]string),
 		modelsLoading: make(map[string]bool),
 		modelErrors:   make(map[string]string),
-		msgAgentIdx:   -1,
+		msgAgentIdx:   0,
 		sidebar:       true,
 	}
 }
@@ -84,6 +84,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.messages = append(m.messages, Message{Kind: MsgAgent, AgentName: msg.agentName, Content: msg.content, Color: clr})
 		m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
+		if len(m.agents) > 0 {
+			m.msgAgentIdx = (m.msgAgentIdx + 1) % len(m.agents)
+		}
 		return m, nil
 
 	case chatErrMsg:
@@ -92,6 +95,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.scrollOffset = 0
 		m.messages = append(m.messages, Message{Kind: MsgError, Content: msg.content})
 		m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
+		if len(m.agents) > 0 {
+			m.msgAgentIdx = (m.msgAgentIdx + 1) % len(m.agents)
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -154,9 +160,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.isRunning = true
 				m.phase = m.nextAgentName()
 				m.scrollOffset = 0
-				if len(m.agents) > 0 {
-					m.msgAgentIdx = (m.msgAgentIdx + 1) % len(m.agents)
-				}
 				ctx, cancel := context.WithCancel(context.Background())
 				m.cancelFn = cancel
 				return m, sendChatCmd(m, ctx)

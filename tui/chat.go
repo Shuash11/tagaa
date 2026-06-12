@@ -92,8 +92,14 @@ func fetchModelsCmd(id, key string) tea.Cmd {
 
 func (m model) nextAgentName() string {
 	n := len(m.agents)
+	if n == 0 {
+		return ""
+	}
 	for i := 0; i < n; i++ {
 		idx := (m.msgAgentIdx + i) % n
+		if idx < 0 {
+			idx += n
+		}
 		a := m.agents[idx]
 		if a.Enabled && a.Provider != "" && a.Model != "" && m.apiKeys[a.Provider] != "" {
 			return a.Name
@@ -106,8 +112,16 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 	var agent agentCfg
 	found := false
 	n := len(m.agents)
+	if n == 0 {
+		return func() tea.Msg {
+			return chatErrMsg{content: "No ready agent: no agents configured"}
+		}
+	}
 	for i := 0; i < n; i++ {
 		idx := (m.msgAgentIdx + i) % n
+		if idx < 0 {
+			idx += n
+		}
 		a := m.agents[idx]
 		if a.Enabled && a.Provider != "" && a.Model != "" && m.apiKeys[a.Provider] != "" {
 			agent = a
