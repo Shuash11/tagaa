@@ -3,12 +3,28 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"strings"
 )
 
 const configFile = "tagaa.config.json"
 
 func saveConfig(m model) {
-	data := savedConfig{APIKeys: m.apiKeys, Agents: m.agents}
+	apiKeys := make(map[string]string, len(m.apiKeys))
+	for k, v := range m.apiKeys {
+		if k == "gemini" {
+			apiKeys["google"] = v
+		} else {
+			apiKeys[k] = v
+		}
+	}
+	agents := make([]agentCfg, len(m.agents))
+	for i, a := range m.agents {
+		agents[i] = a
+		if a.Provider == "gemini" {
+			agents[i].Provider = "google"
+		}
+	}
+	data := savedConfig{APIKeys: apiKeys, Agents: agents}
 	b, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return
@@ -43,6 +59,19 @@ func loadConfig() (map[string]string, []agentCfg) {
 	for i := range data.Agents {
 		if data.Agents[i].Provider == "google" {
 			data.Agents[i].Provider = "gemini"
+		}
+	}
+
+	// resolve ${ENV_VAR} placeholders in API keys
+	for k, v := range data.APIKeys {
+		if strings.HasPrefix(v, "${") && strings.HasSuffix(v, "}") {
+			envName := v[2 : len(v)-1]
+			resolved := os.Getenv(envName)
+			if resolved != "" {
+				data.APIKeys[k] = resolved
+			} else {
+				data.APIKeys[k] = ""
+			}
 		}
 	}
 
