@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,7 +90,19 @@ func fetchModelsCmd(id, key string) tea.Cmd {
 	}
 }
 
-func sendChatCmd(m model) tea.Cmd {
+func (m model) nextAgentName() string {
+	n := len(m.agents)
+	for i := 0; i < n; i++ {
+		idx := (m.msgAgentIdx + i) % n
+		a := m.agents[idx]
+		if a.Enabled && a.Provider != "" && a.Model != "" && m.apiKeys[a.Provider] != "" {
+			return a.Name
+		}
+	}
+	return ""
+}
+
+func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 	var agent agentCfg
 	found := false
 	n := len(m.agents)
@@ -175,7 +188,7 @@ func sendChatCmd(m model) tea.Cmd {
 				Messages:  apiMsgs,
 				MaxTokens: 4096,
 			})
-			req, err = http.NewRequest("POST", base+"/v1/messages", strings.NewReader(string(reqBody)))
+			req, err = http.NewRequestWithContext(ctx, "POST", base+"/v1/messages", strings.NewReader(string(reqBody)))
 			if err != nil {
 				return chatErrMsg{content: err.Error()}
 			}
@@ -200,7 +213,7 @@ func sendChatCmd(m model) tea.Cmd {
 			}
 			reqBody, _ = json.Marshal(geminiReq{Contents: geminiMsgs})
 			url := fmt.Sprintf("%s/v1/models/%s:generateContent?key=%s", base, agent.Model, key)
-			req, err = http.NewRequest("POST", url, strings.NewReader(string(reqBody)))
+			req, err = http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(reqBody)))
 			if err != nil {
 				return chatErrMsg{content: err.Error()}
 			}
@@ -211,7 +224,7 @@ func sendChatCmd(m model) tea.Cmd {
 				Messages []chatMsg `json:"messages"`
 			}
 			reqBody, _ = json.Marshal(openAIReq{Model: agent.Model, Messages: apiMsgs})
-			req, err = http.NewRequest("POST", base+"/v1/chat/completions", strings.NewReader(string(reqBody)))
+			req, err = http.NewRequestWithContext(ctx, "POST", base+"/v1/chat/completions", strings.NewReader(string(reqBody)))
 			if err != nil {
 				return chatErrMsg{content: err.Error()}
 			}

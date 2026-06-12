@@ -331,6 +331,11 @@ func (m model) keysView(msgW, msgH int) string {
 
 	b.WriteString("\n")
 	if m.setEdit {
+		warn := keyWarning(providers[m.setCur].id, m.setKey)
+		if warn != "" {
+			b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#E6C06C")).Render(" ⚠ " + warn))
+			b.WriteString("\n")
+		}
 		b.WriteString("Enter API key, Esc to cancel")
 	} else {
 		b.WriteString(lipgloss.NewStyle().Faint(true).Foreground(muteC).Render("↑↓ provider · Enter edit · d delete · Tab: Agents"))

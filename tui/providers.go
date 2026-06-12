@@ -30,6 +30,27 @@ var providers = []provider{
 	{"openrouter", "OpenRouter"}, {"cohere", "Cohere"},
 }
 
+var keyPrefixes = map[string]string{
+	"anthropic":  "sk-ant-",
+	"openai":     "sk-",
+	"groq":       "gsk_",
+	"deepseek":   "sk-",
+	"together":   "t8ke_",
+	"openrouter": "sk-or-",
+	"cohere":     "",
+}
+
+func keyWarning(provider, key string) string {
+	prefix, ok := keyPrefixes[provider]
+	if !ok || prefix == "" || key == "" {
+		return ""
+	}
+	if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+		return ""
+	}
+	return "Key format looks unusual — expected prefix: " + prefix
+}
+
 var baseURLs = map[string]string{
 	"anthropic":  "https://api.anthropic.com",
 	"openai":     "https://api.openai.com",
