@@ -457,7 +457,33 @@ func (m model) agentsView(msgW, msgH int) string {
 
 		if m.agentEdit && i == m.agentCur {
 			if m.agentField == 1 {
-				for _, pp := range providers {
+				shown := 0
+				maxShow := 6
+				selIdx := -1
+				for i, pp := range providers {
+					if pp.id == m.agentTemp {
+						selIdx = i
+						break
+					}
+				}
+				start := 0
+				if selIdx > maxShow-2 {
+					start = selIdx - (maxShow - 2)
+					if start+maxShow > len(providers) {
+						start = len(providers) - maxShow
+					}
+				}
+				if start < 0 {
+					start = 0
+				}
+				if start > 0 {
+					b.WriteString(lipgloss.NewStyle().Foreground(muteC).Render("     ... (scroll up)"))
+					b.WriteString("\n")
+				}
+				for _, pp := range providers[start:] {
+					if shown >= maxShow {
+						break
+					}
 					sel := "  "
 					pc := muteC
 					if pp.id == m.agentTemp {
@@ -466,12 +492,43 @@ func (m model) agentsView(msgW, msgH int) string {
 					}
 					b.WriteString(lipgloss.NewStyle().Foreground(pc).Render(fmt.Sprintf("     %s%s", sel, pp.label)))
 					b.WriteString("\n")
+					shown++
+				}
+				if start+maxShow < len(providers) {
+					b.WriteString(lipgloss.NewStyle().Foreground(muteC).Render("     ... (more)"))
+					b.WriteString("\n")
 				}
 			}
 			if m.agentField == 2 {
 				models := m.models[m.agents[m.agentCur].Provider]
 				if len(models) > 0 {
-					for _, mn := range models {
+					shown := 0
+					maxShow := 6
+					selIdx := -1
+					for i, mn := range models {
+						if mn == m.agentTemp {
+							selIdx = i
+							break
+						}
+					}
+					start := 0
+					if selIdx > maxShow-2 {
+						start = selIdx - (maxShow - 2)
+						if start+maxShow > len(models) {
+							start = len(models) - maxShow
+						}
+					}
+					if start < 0 {
+						start = 0
+					}
+					if start > 0 {
+						b.WriteString(lipgloss.NewStyle().Foreground(muteC).Render("     ... (scroll up)"))
+						b.WriteString("\n")
+					}
+					for _, mn := range models[start:] {
+						if shown >= maxShow {
+							break
+						}
 						sel := "  "
 						mc := muteC
 						if mn == m.agentTemp {
@@ -483,6 +540,11 @@ func (m model) agentsView(msgW, msgH int) string {
 							line = line[:dw-6]
 						}
 						b.WriteString(lipgloss.NewStyle().Foreground(mc).Render(line))
+						b.WriteString("\n")
+						shown++
+					}
+					if start+maxShow < len(models) {
+						b.WriteString(lipgloss.NewStyle().Foreground(muteC).Render("     ... (more)"))
 						b.WriteString("\n")
 					}
 				} else {
