@@ -348,8 +348,8 @@ func (m model) keysView(msgW, msgH int) string {
 			} else if m.modelsLoading[p.id] {
 				b.WriteString(lipgloss.NewStyle().Foreground(muteC).Render("   ⟳ Fetching models..."))
 				b.WriteString("\n")
-			} else if _, ok := m.modelErrors[p.id]; ok {
-				b.WriteString(lipgloss.NewStyle().Foreground(redC).Render("   ✗ API key rejected or unreachable"))
+			} else if errMsg, ok := m.modelErrors[p.id]; ok {
+				b.WriteString(lipgloss.NewStyle().Foreground(redC).Render("   ✗ " + errMsg))
 				b.WriteString("\n")
 			} else if key != "" {
 				b.WriteString(lipgloss.NewStyle().Foreground(muteC).Render("   Press Enter to fetch models"))
