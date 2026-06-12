@@ -52,6 +52,16 @@ export async function runPhase3PlanVote(
     config
   );
 
+  const bestScore = Math.max(...scores.values());
+  if (bestScore < config.confidence_threshold) {
+    messageStore.push(createMessage("warning", `Best plan score (${bestScore.toFixed(2)}) is below the confidence threshold (${config.confidence_threshold}).`));
+    messageStore.push(createMessage("orchestrator", "Cannot proceed with low-confidence plan. Please refine the task and try again."));
+    state.phase = "awaiting_user_input";
+    state.winningPlan = winner;
+    state.planVotes = votes;
+    return;
+  }
+
   state.winningPlan = winner;
   state.planVotes = votes;
 

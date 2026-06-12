@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -24,6 +25,20 @@ const (
 	MsgError
 	MsgSuccess
 	MsgVote
+	MsgPlan
+	MsgReview
+	MsgDissent
+	MsgPhaseDivider
+)
+
+type PhaseStatus string
+
+const (
+	PhaseIdle     PhaseStatus = "idle"
+	PhasePending  PhaseStatus = "pending"
+	PhaseActive   PhaseStatus = "active"
+	PhaseComplete PhaseStatus = "complete"
+	PhaseFailed   PhaseStatus = "failed"
 )
 
 type Message struct {
@@ -31,6 +46,150 @@ type Message struct {
 	AgentName string
 	Color     lipgloss.Color
 	Content   string
+}
+
+type PlanSummary struct {
+	Summary    string
+	Steps      []string
+	Complexity string
+	Confidence float64
+	Risks      []string
+}
+
+type ReviewLine struct {
+	Type    string `json:"type"`
+	File    string `json:"file"`
+	Line    int    `json:"line"`
+	Message string `json:"message"`
+}
+
+type ReviewResult struct {
+	Lines   []ReviewLine `json:"lines"`
+	Verdict string       `json:"verdict"`
+}
+
+type VoteEntry struct {
+	Voter    string
+	VotedFor string
+	Reason   string
+	Score    float64
+}
+
+type VoteResult struct {
+	Phase   string
+	Entries []VoteEntry
+	Winner  string
+	Scores  map[string]float64
+}
+
+// PendingAgent tracks an agent that is currently thinking
+type PendingAgent struct {
+	Name      string
+	Color     lipgloss.Color
+	Elapsed   time.Duration
+	StartedAt time.Time
+}
+
+// AgentStatusType holds full status information for an agent
+type AgentStatusType struct {
+	Name      string
+	Color     lipgloss.Color
+	Status    string   // "thinking", "done", "error"
+	Elapsed   time.Duration
+	StartedAt time.Time
+}
+
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+type thinkingTickMsg struct{}
+
+// AgentResponse holds a single agent's completed response
+type AgentResponse struct {
+	AgentName string
+	Content   string
+	Color     lipgloss.Color
+}
+
+type PipelineState struct {
+	Intake      PhaseStatus
+	Planning    PhaseStatus
+	PlanVote    PhaseStatus
+	ExecVote    PhaseStatus
+	Execution   PhaseStatus
+	Review      PhaseStatus
+}
+
+type PhaseName string
+
+const (
+	PhaseIntake    PhaseName = "intake"
+	PhasePlanning  PhaseName = "planning"
+	PhasePlanVote  PhaseName = "plan_vote"
+	PhaseExecVote  PhaseName = "exec_vote"
+	PhaseExecution PhaseName = "execution"
+	PhaseReview    PhaseName = "review"
+)
+
+type PlanResponse struct {
+	AgentName string
+	Color     lipgloss.Color
+	Plan      string
+	Steps     []string
+}
+
+// PipelineActionMsg is sent from pipeline to the TUI
+type PipelineActionMsg struct {
+	Action  string
+	Content interface{}
+}
+
+// internal message for pipeline phase completion
+type pipelineBatchMsg struct {
+	phase    string
+	messages []Message
+	state    PipelineState
+	done     bool
+}
+
+type pipelineTickMsg struct{}
+
+func (ps PipelineState) String() string {
+	type phaseDef struct {
+		s   PhaseStatus
+		lbl string
+	}
+	phases := []phaseDef{
+		{ps.Intake, "Intake"},
+		{ps.Planning, "Planning"},
+		{ps.PlanVote, "Vote"},
+		{ps.ExecVote, "Exec"},
+		{ps.Execution, "Execute"},
+		{ps.Review, "Review"},
+	}
+	var result string
+	for i, p := range phases {
+		if i > 0 {
+			result += " → "
+		}
+		var dot string
+		var clr lipgloss.Color
+		switch p.s {
+		case PhaseActive:
+			dot = "●"
+			clr = lipgloss.Color("#00FF00")
+		case PhaseComplete:
+			dot = "✓"
+			clr = lipgloss.Color("#00FFFF")
+		case PhaseFailed:
+			dot = "✗"
+			clr = lipgloss.Color("#FF0000")
+		default:
+			dot = "○"
+			clr = muteC
+		}
+		result += lipgloss.NewStyle().Foreground(clr).Render(dot + " " + p.lbl)
+	}
+	return result
 }
 
 type model struct {
@@ -41,13 +200,17 @@ type model struct {
 	models        map[string][]string
 	modelsLoading map[string]bool
 	modelErrors   map[string]string
-	phase         string
-	isRunning     bool
-	scrollOffset  int
+	phase             string
+	pipeline          PipelineState
+	cancelledPhase    string
+	isRunning         bool
+	cancelledAgentCount int
+	scrollOffset      int
 	sessionID     int
 	sessionTime   string
-	msgAgentIdx   int
-	sidebar       bool
+	pendingAgents  []PendingAgent
+	agentResponses []AgentResponse
+	sidebar        bool
 	sidebarConfig bool
 	sidebarSel    int
 	sidebarStep   int
@@ -71,6 +234,11 @@ type model struct {
 	thinking      bool
 	w, h          int
 	ready         bool
+	spinnerIdx      int
+	planExpanded    map[int]bool
+	totalTokens     int
+	showTokenEstimate bool
+	pipelineCh      chan pipelineBatchMsg
 }
 
 type fetchModelsMsg struct {
@@ -96,12 +264,14 @@ type toolCall struct {
 }
 
 type chatErrMsg struct {
-	content string
+	agentName string
+	content   string
 }
 
 type streamTickMsg struct{}
 
 type savedConfig struct {
-	APIKeys map[string]string `json:"api_keys"`
-	Agents  []agentCfg        `json:"agents"`
+	APIKeys           map[string]string `json:"api_keys"`
+	Agents            []agentCfg        `json:"agents"`
+	ShowTokenEstimate bool              `json:"show_token_estimate"`
 }

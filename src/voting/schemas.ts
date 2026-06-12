@@ -27,6 +27,8 @@ export const PlanStepSchema = z.object({
   target_file: z.string().optional(),
 });
 
+export type PlanStep = z.infer<typeof PlanStepSchema>;
+
 export const PlanSchema = z.object({
   agent: z.string(),
   plan_id: z.string().uuid(),
@@ -181,11 +183,11 @@ export const SessionLogEntrySchema = z.discriminatedUnion("phase", [
 export type SessionLogEntry = z.infer<typeof SessionLogEntrySchema>;
 
 export const AgentConfigSchema = z.object({
-  name: z.string(),
+  name: z.string().min(1, "Name string cannot be empty"),
   provider: z.enum(["anthropic", "openai", "google", "mistral", "deepseek", "xai", "nvidia", "groq", "together", "openrouter", "cohere"]),
-  model: z.string(),
-  specialty: z.string(),
-  color: z.string(),
+  model: z.string().min(1, "Model string cannot be empty"),
+  specialty: z.string().min(1, "Specialty string cannot be empty"),
+  color: z.string().min(1, "Color string cannot be empty"),
   enabled: z.boolean(),
   base_url: z.string().url().optional(),
 });

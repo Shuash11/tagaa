@@ -90,47 +90,18 @@ func fetchModelsCmd(id, key string) tea.Cmd {
 	}
 }
 
-func (m model) nextAgentName() string {
-	n := len(m.agents)
-	if n == 0 {
-		return ""
-	}
-	for i := 0; i < n; i++ {
-		idx := (m.msgAgentIdx + i) % n
-		if idx < 0 {
-			idx += n
-		}
-		a := m.agents[idx]
+func sendGroupThinkCmd(m model, ctx context.Context) tea.Cmd {
+	var agents []agentCfg
+	for _, a := range m.agents {
 		if a.Enabled && a.Provider != "" && a.Model != "" && m.apiKeys[a.Provider] != "" {
-			return a.Name
+			agents = append(agents, a)
 		}
 	}
-	return ""
-}
-
-func sendChatCmd(m model, ctx context.Context) tea.Cmd {
-	var agent agentCfg
-	found := false
-	n := len(m.agents)
-	if n == 0 {
-		return func() tea.Msg {
-			return chatErrMsg{content: "No ready agent: no agents configured"}
-		}
-	}
-	for i := 0; i < n; i++ {
-		idx := (m.msgAgentIdx + i) % n
-		if idx < 0 {
-			idx += n
-		}
-		a := m.agents[idx]
-		if a.Enabled && a.Provider != "" && a.Model != "" && m.apiKeys[a.Provider] != "" {
-			agent = a
-			found = true
-			break
-		}
-	}
-	if !found {
+	if len(agents) == 0 {
 		msg := "No ready agent:"
+		if len(m.agents) == 0 {
+			msg += " no agents configured"
+		}
 		for _, a := range m.agents {
 			why := ""
 			if !a.Enabled {
@@ -154,10 +125,42 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 		}
 	}
 
+	var task string
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		if m.messages[i].Kind == MsgUser && m.messages[i].Content != "" {
+			task = m.messages[i].Content
+			break
+		}
+	}
+
+	ch := m.pipelineCh
+	go func() {
+		p := NewPipeline(agents, m.apiKeys)
+		p.history = m.messages
+		p.Run(ctx, task, ch)
+	}()
+	return pipelinePollCmd(ch)
+}
+
+func pipelinePollCmd(ch chan pipelineBatchMsg) tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+		select {
+		case msg, ok := <-ch:
+			if !ok {
+				return pipelineBatchMsg{done: true}
+			}
+			return msg
+		default:
+			return pipelineTickMsg{}
+		}
+	})
+}
+
+func sendSingleAgentCmd(m model, ctx context.Context, agent agentCfg) tea.Cmd {
 	base, ok := baseURLs[agent.Provider]
 	if !ok {
 		return func() tea.Msg {
-			return chatErrMsg{content: "Unknown provider: " + agent.Provider}
+			return chatErrMsg{agentName: agent.Name, content: "Unknown provider: " + agent.Provider}
 		}
 	}
 	key := m.apiKeys[agent.Provider]
@@ -183,6 +186,7 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 		Parts []geminiPart `json:"parts"`
 	}
 
+	var systemString string
 	var systemParts []string
 	var openAIMsgs []openAIMsg
 	var anthropicMsgs []anthropicMsg
@@ -211,9 +215,8 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 		systemParts = append([]string{"You are a thorough, step-by-step thinker. Always reason through problems carefully before answering. Show your chain of thought."}, systemParts...)
 	}
 	if len(systemParts) > 0 {
-		sys := strings.Join(systemParts, "\n")
-		openAIMsgs = append([]openAIMsg{{Role: "system", Content: sys}}, openAIMsgs...)
-		anthropicMsgs = append([]anthropicMsg{{Role: "user", Content: sys}}, anthropicMsgs...)
+		systemString = strings.Join(systemParts, "\n")
+		openAIMsgs = append([]openAIMsg{{Role: "system", Content: systemString}}, openAIMsgs...)
 	}
 
 	return func() tea.Msg {
@@ -228,14 +231,15 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 		case "anthropic":
 			type anthropicReq struct {
 				Model     string                   `json:"model"`
+				System    string                   `json:"system,omitempty"`
 				Messages  []anthropicMsg           `json:"messages"`
 				MaxTokens int                      `json:"max_tokens"`
 				Tools     []map[string]interface{} `json:"tools,omitempty"`
 			}
-			reqBody, _ = json.Marshal(anthropicReq{Model: agent.Model, Messages: anthropicMsgs, MaxTokens: 4096, Tools: toolsCfg.([]map[string]interface{})})
+			reqBody, _ = json.Marshal(anthropicReq{Model: agent.Model, System: systemString, Messages: anthropicMsgs, MaxTokens: 4096, Tools: toolsCfg.([]map[string]interface{})})
 			req, err = http.NewRequestWithContext(ctx, "POST", base+"/v1/messages", strings.NewReader(string(reqBody)))
 			if err != nil {
-				return chatErrMsg{content: err.Error()}
+				return chatErrMsg{agentName: agent.Name, content: err.Error()}
 			}
 			req.Header.Set("x-api-key", key)
 			req.Header.Set("anthropic-version", "2023-06-01")
@@ -250,7 +254,7 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 			url := fmt.Sprintf("%s/v1/models/%s:generateContent?key=%s", base, agent.Model, key)
 			req, err = http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(reqBody)))
 			if err != nil {
-				return chatErrMsg{content: err.Error()}
+				return chatErrMsg{agentName: agent.Name, content: err.Error()}
 			}
 			req.Header.Set("Content-Type", "application/json")
 
@@ -264,7 +268,7 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 			reqBody, _ = json.Marshal(openAIReq{Model: agent.Model, Messages: openAIMsgs, MaxTokens: 4096, Tools: toolsCfg.([]map[string]interface{})})
 			req, err = http.NewRequestWithContext(ctx, "POST", base+"/v1/chat/completions", strings.NewReader(string(reqBody)))
 			if err != nil {
-				return chatErrMsg{content: err.Error()}
+				return chatErrMsg{agentName: agent.Name, content: err.Error()}
 			}
 			req.Header.Set("Authorization", "Bearer "+key)
 			req.Header.Set("Content-Type", "application/json")
@@ -272,12 +276,12 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 
 		resp, err := client.Do(req)
 		if err != nil {
-			return chatErrMsg{content: err.Error()}
+			return chatErrMsg{agentName: agent.Name, content: err.Error()}
 		}
 		defer resp.Body.Close()
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return chatErrMsg{content: err.Error()}
+			return chatErrMsg{agentName: agent.Name, content: err.Error()}
 		}
 		if resp.StatusCode >= 400 {
 			short := fmt.Sprintf("HTTP %d", resp.StatusCode)
@@ -295,7 +299,7 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 					short += " Error"
 				}
 			}
-			return chatErrMsg{content: short}
+			return chatErrMsg{agentName: agent.Name, content: short}
 		}
 
 		// Check for tool calls using the unified parser
@@ -303,7 +307,7 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 		if len(calls) == 0 {
 			content := extractFinalText(agent.Provider, body)
 			if content == "" {
-				return chatErrMsg{content: "Empty response"}
+				return chatErrMsg{agentName: agent.Name, content: "Empty response"}
 			}
 			return chatRespMsg{agentName: agent.Name, content: content, provider: agent.Provider}
 		}
@@ -353,10 +357,11 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 		case "anthropic":
 			type anthropicReq struct {
 				Model     string         `json:"model"`
+				System    string         `json:"system,omitempty"`
 				Messages  []anthropicMsg `json:"messages"`
 				MaxTokens int            `json:"max_tokens"`
 			}
-			reqBody, _ = json.Marshal(anthropicReq{Model: agent.Model, Messages: anthropicMsgs, MaxTokens: 4096})
+			reqBody, _ = json.Marshal(anthropicReq{Model: agent.Model, System: systemString, Messages: anthropicMsgs, MaxTokens: 4096})
 			req, err = http.NewRequestWithContext(ctx, "POST", base+"/v1/messages", strings.NewReader(string(reqBody)))
 			req.Header.Set("x-api-key", key)
 			req.Header.Set("anthropic-version", "2023-06-01")
@@ -384,7 +389,7 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 			if toolSummary != "" {
 				return chatRespMsg{agentName: agent.Name, content: toolSummary + "\n\n(Follow-up error)", provider: agent.Provider, toolResult: toolSummary}
 			}
-			return chatErrMsg{content: "Follow-up request failed: " + err.Error()}
+			return chatErrMsg{agentName: agent.Name, content: "Follow-up request failed: " + err.Error()}
 		}
 
 		resp2, err := client.Do(req)
@@ -392,7 +397,7 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 			if toolSummary != "" {
 				return chatRespMsg{agentName: agent.Name, content: toolSummary + "\n\n(Follow-up failed)", provider: agent.Provider, toolResult: toolSummary}
 			}
-			return chatErrMsg{content: "Follow-up call failed: " + err.Error()}
+			return chatErrMsg{agentName: agent.Name, content: "Follow-up call failed: " + err.Error()}
 		}
 		defer resp2.Body.Close()
 		body2, err := io.ReadAll(resp2.Body)
@@ -400,14 +405,14 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 			if toolSummary != "" {
 				return chatRespMsg{agentName: agent.Name, content: toolSummary + "\n\n(Read error)", provider: agent.Provider, toolResult: toolSummary}
 			}
-			return chatErrMsg{content: "Failed to read follow-up response"}
+			return chatErrMsg{agentName: agent.Name, content: "Failed to read follow-up response"}
 		}
 		content := extractFinalText(agent.Provider, body2)
 		if content == "" && toolSummary != "" {
 			return chatRespMsg{agentName: agent.Name, content: toolSummary, provider: agent.Provider, toolResult: toolSummary}
 		}
 		if content == "" {
-			return chatErrMsg{content: "Empty follow-up response"}
+			return chatErrMsg{agentName: agent.Name, content: "Empty follow-up response"}
 		}
 		return chatRespMsg{agentName: agent.Name, content: content, provider: agent.Provider, toolResult: toolSummary}
 	}

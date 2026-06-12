@@ -1,7 +1,8 @@
+import * as fs from "fs";
 import { Agent } from "../agents/agent.js";
 import { SessionState } from "../orchestrator/state.js";
 import { ToolLayer } from "../tools/tool-layer.js";
-import { ToolCall, ExecutionOutput, VotingConfig } from "../voting/schemas.js";
+import { ExecutionOutput, VotingConfig } from "../voting/schemas.js";
 import { BugFixCouncil } from "../bugfix/council.js";
 import { messageStore, createMessage } from "../ui/message-store.js";
 
@@ -55,28 +56,41 @@ export async function runPhase5Execute(
   for (const step of plan.steps) {
     messageStore.push(createMessage("dim", `→ Step ${step.step}: ${step.action}...`));
 
-    const toolCall: ToolCall = {
-      tool: "run_command",
-      args: { command: `echo "Step ${step.step}: ${step.action}"` },
-    };
+    const toolCall = await executor.executeStep(step, state.taskBrief!);
 
     try {
       const result = await toolLayer.execute(toolCall);
-      executionOutputs.push({
-        type: "bash_cmd",
-        command: toolCall.args.command as string,
-        stdout: result.output || "",
-        stderr: result.error || "",
-        exit_code: result.success ? 0 : 1,
-      });
+      if (toolCall.tool === "run_command") {
+        executionOutputs.push({
+          type: "bash_cmd",
+          command: toolCall.args.command as string,
+          stdout: result.output || "",
+          stderr: result.error || "",
+          exit_code: result.success ? 0 : 1,
+        });
+      } else {
+        executionOutputs.push({
+          type: "message",
+          content: `[${toolCall.tool}] ${result.success ? "OK" : "FAILED"}: ${result.output || result.error || ""}`,
+        });
+      }
       if (result.output) messageStore.push(createMessage("dim", result.output));
+
+      if (result.success && (toolCall.tool === "write_file" || toolCall.tool === "edit_file")) {
+        const filePath = toolCall.args.path;
+        if (typeof filePath === "string") {
+          try {
+            const content = fs.readFileSync(filePath, "utf-8");
+            state.changedFiles.set(filePath, content);
+          } catch {
+            // file may not exist or was deleted
+          }
+        }
+      }
     } catch (err) {
       executionOutputs.push({
-        type: "bash_cmd",
-        command: toolCall.args.command as string,
-        stdout: "",
-        stderr: String(err),
-        exit_code: 1,
+        type: "message",
+        content: `[${toolCall.tool}] ERROR: ${String(err)}`,
       });
       messageStore.push(createMessage("error", `Step ${step.step} failed: ${err}`));
     }
@@ -101,7 +115,7 @@ export async function runPhase5Execute(
 
     for (const reviewer of reviewers) {
       try {
-        const review = await reviewer.peerReview(new Map(), state.taskBrief!);
+        const review = await reviewer.peerReview(state.changedFiles, state.taskBrief!);
         state.peerReviews.push(review);
 
         if (review.verdict === "changes_requested") {

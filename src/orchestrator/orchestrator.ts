@@ -11,6 +11,7 @@ import { runPhase3PlanVote } from "../phases/phase3-plan-vote.js";
 import { runPhase4CompatVote } from "../phases/phase4-compat-vote.js";
 import { runPhase5Execute } from "../phases/phase5-execute.js";
 import { messageStore, createMessage } from "../ui/message-store.js";
+import { appState } from "../ui/app-state.js";
 
 export class Orchestrator {
   private pool: AgentPool;
@@ -80,6 +81,15 @@ export class Orchestrator {
           messageStore.push(createMessage("orchestrator", "Fast mode enabled. Voting phases will be skipped."));
         }
         break;
+      case "/plans":
+        this.showPlans();
+        break;
+      case "/plan":
+        this.showPlanDetail(parts[1]);
+        break;
+      case "/replay":
+        await this.handleReplay(parts[1]);
+        break;
       default:
         messageStore.push(createMessage("error", `Unknown command: ${command}. Type /help for available commands.`));
     }
@@ -89,7 +99,11 @@ export class Orchestrator {
     const commands = [
       "/help           Show all commands",
       "/agents         List active agents and their model strings",
+      "/plans          List all plans with one-line summaries",
+      "/plan <N>       Show full detail for plan number N",
       "/votes          Show full vote log for current session",
+      "/replay         List saved sessions",
+      "/replay <N>     Load and display a saved session",
       "/skip vote      Skip voting phases (fast mode)",
       "/reset          Clear session state",
       "/export         Save session log to JSON",
@@ -130,6 +144,43 @@ export class Orchestrator {
     }
   }
 
+  private showPlans(): void {
+    if (this.state.plans.size === 0) {
+      messageStore.push(createMessage("orchestrator", "No plans have been generated in this session yet."));
+      return;
+    }
+
+    const planList = [...this.state.plans.values()];
+    messageStore.push(createMessage("orchestrator", `Plans (${planList.length}):`));
+    planList.forEach((plan, i) => {
+      messageStore.push(createMessage("dim", `  ${i + 1}. [${plan.agent}] ${plan.summary} (confidence: ${Math.round(plan.self_confidence * 100)}%)`));
+    });
+  }
+
+  private showPlanDetail(indexStr: string): void {
+    const planList = [...this.state.plans.values()];
+    if (planList.length === 0) {
+      messageStore.push(createMessage("orchestrator", "No plans have been generated in this session yet."));
+      return;
+    }
+    const idx = parseInt(indexStr, 10);
+    if (isNaN(idx) || idx < 1 || idx > planList.length) {
+      messageStore.push(createMessage("error", `Invalid plan number. Use /plans to list plans (1-${planList.length}).`));
+      return;
+    }
+    const plan = planList[idx - 1];
+    const stepsStr = plan.steps.map((s) => `  ${s.step}. ${s.action}${s.target_file ? ` (${s.target_file})` : ""}`).join("\n");
+    messageStore.push(createMessage("orchestrator", `Plan #${idx} by ${plan.agent}:`));
+    messageStore.push(createMessage("dim", `  ID: ${plan.plan_id}`));
+    messageStore.push(createMessage("dim", `  Summary: ${plan.summary}`));
+    messageStore.push(createMessage("dim", `  Steps:\n${stepsStr}`));
+    messageStore.push(createMessage("dim", `  Complexity: ${plan.estimated_complexity}`));
+    messageStore.push(createMessage("dim", `  Confidence: ${Math.round(plan.self_confidence * 100)}%`));
+    if (plan.risks.length > 0) {
+      messageStore.push(createMessage("warning", `  Risks: ${plan.risks.join(", ")}`));
+    }
+  }
+
   private reset(): void {
     const sessionId = crypto.randomUUID();
     this.state = createSessionState(sessionId);
@@ -143,6 +194,43 @@ export class Orchestrator {
     messageStore.push(createMessage("success", `Session log saved to ${this.logger.getLogPath()}`));
   }
 
+  private async handleReplay(indexStr: string | undefined): Promise<void> {
+    const sessions = await this.logger.listSessions();
+    if (sessions.length === 0) {
+      messageStore.push(createMessage("orchestrator", "No saved sessions found."));
+      return;
+    }
+
+    if (!indexStr) {
+      messageStore.push(createMessage("orchestrator", "Available sessions:"));
+      sessions.forEach((s, i) => {
+        const status = s.completedAt ? "completed" : "incomplete";
+        messageStore.push(createMessage("dim", `  ${i + 1}. ${s.sessionId.slice(0, 8)}... (${new Date(s.startedAt).toLocaleString()}, ${status})`));
+      });
+      messageStore.push(createMessage("dim", "  Use /replay <N> to load a session."));
+      return;
+    }
+
+    const idx = parseInt(indexStr, 10);
+    if (isNaN(idx) || idx < 1 || idx > sessions.length) {
+      messageStore.push(createMessage("error", `Invalid session number. Use /replay to list sessions (1-${sessions.length}).`));
+      return;
+    }
+
+    const target = sessions[idx - 1];
+    const replayLogger = new SessionLogger(target.sessionId);
+    try {
+      await replayLogger.load();
+      const log = replayLogger.getLog();
+      messageStore.push(createMessage("orchestrator", `Session ${target.sessionId.slice(0, 8)}... (started: ${new Date(target.startedAt).toLocaleString()}):`));
+      for (const entry of log.entries) {
+        messageStore.push(createMessage("dim", `  [${entry.phase}] ${JSON.stringify(entry).slice(0, 200)}`));
+      }
+    } catch {
+      messageStore.push(createMessage("error", `Failed to load session ${target.sessionId.slice(0, 8)}...`));
+    }
+  }
+
   async runTask(input: string): Promise<void> {
     if (this.isRunning) {
       messageStore.push(createMessage("error", "A task is already running. Please wait or use /reset."));
@@ -152,6 +240,7 @@ export class Orchestrator {
     this.isRunning = true;
 
     try {
+      appState.setPhase("intake");
       await runPhase1Intake(this.state, input, this.config.execution.working_directory);
 
       const enabledAgents = this.pool.getEnabledAgents();
@@ -161,10 +250,13 @@ export class Orchestrator {
         return;
       }
 
-      await runPhase2Plan(this.state, enabledAgents);
+      appState.setPhase("plan_generation");
+      await runPhase2Plan(this.state, enabledAgents, this.config);
 
       if (!this.state.fastMode) {
+        appState.setPhase("plan_vote");
         await runPhase3PlanVote(this.state, enabledAgents, this.config.voting);
+        appState.setPhase("compatibility_vote");
         await runPhase4CompatVote(this.state, enabledAgents, this.config.voting);
       } else {
         if (this.state.winningPlan) {
@@ -173,6 +265,7 @@ export class Orchestrator {
         }
       }
 
+      appState.setPhase("execution");
       await runPhase5Execute(
         this.state,
         enabledAgents,
@@ -192,6 +285,7 @@ export class Orchestrator {
       messageStore.push(createMessage("error", `Task failed: ${error instanceof Error ? error.message : String(error)}`));
     } finally {
       this.isRunning = false;
+      appState.setRunning(false);
     }
   }
 

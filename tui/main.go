@@ -11,7 +11,7 @@ import (
 )
 
 func initialModel() model {
-	apiKeys, agents := loadConfig()
+	apiKeys, agents, showTokenEstimate := loadConfig()
 	sid, stime, sessionMsgs := loadLatestSession()
 
 	var msgs []Message
@@ -28,16 +28,17 @@ func initialModel() model {
 	}
 
 	return model{
-		sessionID:     sid,
-		sessionTime:   stime,
-		agents:        agents,
-		messages:      msgs,
-		apiKeys:       apiKeys,
-		models:        make(map[string][]string),
-		modelsLoading: make(map[string]bool),
-		modelErrors:   make(map[string]string),
-		msgAgentIdx:   0,
-		sidebar:       true,
+		sessionID:         sid,
+		sessionTime:       stime,
+		agents:            agents,
+		messages:          msgs,
+		apiKeys:           apiKeys,
+		models:            make(map[string][]string),
+		modelsLoading:     make(map[string]bool),
+		modelErrors:       make(map[string]string),
+		sidebar:           true,
+		showTokenEstimate: showTokenEstimate,
+		planExpanded:      make(map[int]bool),
 	}
 }
 
@@ -73,6 +74,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.isRunning {
 			return m, nil
 		}
+		// Remove agent from pendingAgents
+		for i, pa := range m.pendingAgents {
+			if pa.Name == msg.agentName {
+				m.pendingAgents = append(m.pendingAgents[:i], m.pendingAgents[i+1:]...)
+				break
+			}
+		}
 		clr := lipgloss.Color("#00CED1")
 		for i, a := range m.agents {
 			if a.Name == msg.agentName {
@@ -85,26 +93,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
 		}
 		if msg.content == "" && msg.toolResult == "" {
-			m.isRunning = false
-			m.phase = ""
 			m.messages = append(m.messages, Message{Kind: MsgAgent, AgentName: msg.agentName, Content: "(empty response)", Color: clr})
 			m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
-			if len(m.agents) > 0 {
-				m.msgAgentIdx = (m.msgAgentIdx + 1) % len(m.agents)
+			if len(m.pendingAgents) == 0 {
+				if len(m.agentResponses) > 0 {
+					var cmd tea.Cmd
+					m, cmd = startNextStream(m)
+					return m, cmd
+				}
+				m.isRunning = false
+				m.phase = ""
 			}
 			return m, nil
 		}
-		m.streamText = msg.content
-		m.streamPos = 0
-		if m.thinking {
-			m.phase = "💬 " + msg.agentName
-		} else {
-			m.phase = msg.agentName
+		m.totalTokens += len(msg.content) / 4
+		m.agentResponses = append(m.agentResponses, AgentResponse{
+			AgentName: msg.agentName,
+			Content:   msg.content,
+			Color:     clr,
+		})
+		if len(m.pendingAgents) == 0 && (m.streamText == "" || m.streamPos >= len(m.streamText)) {
+			var cmd tea.Cmd
+			m, cmd = startNextStream(m)
+			return m, cmd
 		}
-		m.scrollOffset = 0
-		m.messages = append(m.messages, Message{Kind: MsgAgent, AgentName: msg.agentName, Content: "", Color: clr})
-		m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
-		return m, streamTickCmd()
+		return m, nil
+
+	case thinkingTickMsg:
+		if !m.isRunning || len(m.pendingAgents) == 0 {
+			return m, nil
+		}
+		m.spinnerIdx = (m.spinnerIdx + 1) % len(spinnerFrames)
+		now := time.Now()
+		for i := range m.pendingAgents {
+			m.pendingAgents[i].Elapsed = now.Sub(m.pendingAgents[i].StartedAt)
+		}
+		return m, thinkingTickCmd()
 
 	case streamTickMsg:
 		if !m.isRunning || m.streamText == "" {
@@ -113,8 +137,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streamPos += 3
 		if m.streamPos >= len(m.streamText) {
 			m.streamPos = len(m.streamText)
-			m.isRunning = false
-			m.phase = ""
 		}
 		for i := len(m.messages) - 1; i >= 0; i-- {
 			if m.messages[i].Kind == MsgAgent {
@@ -122,24 +144,66 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
-		if !m.isRunning {
-			if len(m.agents) > 0 {
-				m.msgAgentIdx = (m.msgAgentIdx + 1) % len(m.agents)
+		if m.streamPos >= len(m.streamText) {
+			m.streamText = ""
+			m.streamPos = 0
+			if len(m.agentResponses) > 0 {
+				var cmd tea.Cmd
+				m, cmd = startNextStream(m)
+				return m, cmd
 			}
+			m.isRunning = false
+			m.phase = ""
 			return m, nil
 		}
 		return m, streamTickCmd()
 
 	case chatErrMsg:
-		m.isRunning = false
-		m.phase = ""
+		if msg.agentName != "" {
+			for i, pa := range m.pendingAgents {
+				if pa.Name == msg.agentName {
+					m.pendingAgents = append(m.pendingAgents[:i], m.pendingAgents[i+1:]...)
+					break
+				}
+			}
+		}
 		m.scrollOffset = 0
 		m.messages = append(m.messages, Message{Kind: MsgError, Content: msg.content})
 		m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
-		if len(m.agents) > 0 {
-			m.msgAgentIdx = (m.msgAgentIdx + 1) % len(m.agents)
+		if len(m.pendingAgents) == 0 && (m.streamText == "" || m.streamPos >= len(m.streamText)) {
+			if len(m.agentResponses) > 0 {
+				var cmd tea.Cmd
+				m, cmd = startNextStream(m)
+				return m, cmd
+			}
+			m.isRunning = false
+			m.phase = ""
 		}
 		return m, nil
+
+	case pipelineBatchMsg:
+		if msg.done {
+			m.isRunning = false
+			m.pipelineCh = nil
+			m.pendingAgents = nil
+			if msg.messages != nil {
+				m.messages = append(m.messages, msg.messages...)
+			}
+			m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
+			m.pipeline = msg.state
+			m.phase = ""
+			return m, nil
+		}
+		m.messages = append(m.messages, msg.messages...)
+		m.pipeline = msg.state
+		m.phase = msg.phase
+		return m, pipelinePollCmd(m.pipelineCh)
+
+	case pipelineTickMsg:
+		if m.pipelineCh == nil {
+			return m, nil
+		}
+		return m, pipelinePollCmd(m.pipelineCh)
 
 	case tea.KeyMsg:
 		if m.settings {
@@ -174,6 +238,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+up":
 			m.scrollOffset += 3
+			if m.scrollOffset > 99999 {
+				m.scrollOffset = 99999
+			}
 			return m, nil
 		case "ctrl+down":
 			if m.scrollOffset >= 3 {
@@ -184,6 +251,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "pgup":
 			m.scrollOffset += m.h / 2
+			if m.scrollOffset > 99999 {
+				m.scrollOffset = 99999
+			}
 			return m, nil
 		case "pgdown":
 			n := m.h / 2
@@ -205,8 +275,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cancelFn()
 				m.cancelFn = nil
 				m.isRunning = false
+				m.pipelineCh = nil
 				m.phase = ""
 				m.streamText = ""
+				m.streamPos = 0
+				m.pendingAgents = nil
+				m.agentResponses = nil
 				m.messages = append(m.messages, Message{Kind: MsgSystem, Content: "Cancelled"})
 				m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
 			}
@@ -233,6 +307,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "left", "right":
 			return m, nil
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+			s := msg.String()
+			if m.cmdMode || m.settings || m.sidebarConfig {
+				return m, nil
+			}
+			if m.planExpanded == nil {
+				m.planExpanded = make(map[int]bool)
+			}
+			target := int(s[0] - '0')
+			planCount := 0
+			for i, msg := range m.messages {
+				if msg.Kind == MsgPlan {
+					planCount++
+					if planCount == target {
+						m.planExpanded[i] = !m.planExpanded[i]
+						return m, nil
+					}
+				}
+			}
+			return m, nil
 		case "enter":
 			if m.cmdMode {
 				return m, nil
@@ -243,16 +337,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if t := strings.TrimSpace(m.input); t != "" {
 				m.messages = append(m.messages, Message{Kind: MsgUser, Content: t})
 				m.input = ""
-				m.isRunning = true
-				if m.thinking {
-					m.phase = "🤔 " + m.nextAgentName()
-				} else {
-					m.phase = m.nextAgentName()
+
+				ready := false
+				for _, a := range m.agents {
+					if a.Enabled && a.Provider != "" && a.Model != "" && m.apiKeys[a.Provider] != "" {
+						ready = true
+						break
+					}
 				}
+				if !ready {
+					m.messages = append(m.messages, Message{Kind: MsgError, Content: "No ready agents configured"})
+					m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
+					return m, nil
+				}
+
+				m.pendingAgents = nil
+				m.agentResponses = nil
+				m.pipelineCh = make(chan pipelineBatchMsg, 10)
+				m.isRunning = true
+				m.phase = "pipeline"
 				m.scrollOffset = 0
+				m.streamText = ""
+				m.streamPos = 0
+				m.totalTokens += len(t) / 4
 				ctx, cancel := context.WithCancel(context.Background())
 				m.cancelFn = cancel
-				return m, sendChatCmd(m, ctx)
+				return m, sendGroupThinkCmd(m, ctx)
 			}
 			return m, nil
 		case "backspace":
@@ -292,160 +402,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
-}
-
-func (m model) View() string {
-	if !m.ready {
-		return "Loading..."
-	}
-
-	sw := 22
-	mw := m.w
-	if m.sidebar {
-		mw = m.w - sw
-	}
-	if mw < 10 {
-		mw = 10
-	}
-
-	phaseStr := ""
-	if m.phase != "" {
-		if m.isRunning {
-			phaseStr = lipgloss.NewStyle().Foreground(greenC).Render(" [" + m.phase + " ◆]")
-		} else {
-			phaseStr = lipgloss.NewStyle().Foreground(blueC).Render(" [" + m.phase + "]")
-		}
-	} else {
-		phaseStr = lipgloss.NewStyle().Faint(true).Foreground(muteC).Render(" [idle]")
-	}
-	if m.thinking {
-		phaseStr += lipgloss.NewStyle().Foreground(accentC).Render(" 🧠")
-	}
-	if m.scrollOffset > 0 {
-		phaseStr += lipgloss.NewStyle().Foreground(accentC).Render(fmt.Sprintf(" ↑%d", m.scrollOffset))
-	}
-
-	sessionStr := ""
-	if m.sessionID > 0 {
-		sessionStr = lipgloss.NewStyle().Faint(true).Foreground(muteC).Render(fmt.Sprintf("  #%d", m.sessionID))
-	}
-
-	hdr := lipgloss.NewStyle().
-		Background(bg).
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(borderC).
-		Width(mw - 2).
-		PaddingLeft(1).
-		Render(lipgloss.NewStyle().Background(bg).Render(
-			lipgloss.NewStyle().Bold(true).Foreground(accentC).Render(" TAGAA") +
-				sessionStr +
-				phaseStr +
-				lipgloss.NewStyle().Faint(true).Render("  v0.1.0"),
-		))
-
-	inpWidth := mw - 4
-	cursor := lipgloss.NewStyle().Background(lipgloss.Color("#E6E6E6")).Render(" ")
-	var inpContent string
-	if m.isRunning {
-		inpContent = lipgloss.NewStyle().Bold(true).Foreground(blueC).Render("◆ Waiting for response…")
-	} else {
-		inpContent = lipgloss.NewStyle().Bold(true).Foreground(accentC).Render("λ ") +
-			lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E6E6E6")).Render(m.input) +
-			cursor
-	}
-	inp := lipgloss.NewStyle().
-		Background(bg).
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(blueC).
-		Width(inpWidth).
-		PaddingLeft(1).
-		Render(inpContent)
-
-	msgH := m.h - 6
-	if msgH < 1 {
-		msgH = 1
-	}
-	msgW := mw - 2
-
-	if m.settings {
-		var msgs string
-		if m.settingsTab == 0 {
-			msgs = m.keysView(msgW, msgH)
-		} else {
-			msgs = m.agentsView(msgW, msgH)
-		}
-		mainCol := lipgloss.JoinVertical(lipgloss.Top, hdr, msgs, inp)
-		if m.sidebar {
-			return lipgloss.JoinHorizontal(lipgloss.Top, mainCol, m.sideView())
-		}
-		return mainCol
-	}
-
-	if m.cmdMode {
-		msgs := m.cmdModeView(msgW, msgH)
-		mainCol := lipgloss.JoinVertical(lipgloss.Top, hdr, msgs, inp)
-		if m.sidebar {
-			return lipgloss.JoinHorizontal(lipgloss.Top, mainCol, m.sideView())
-		}
-		return mainCol
-	}
-
-	var allLines []string
-	for _, msg := range m.messages {
-		r := renderMessage(msg, msgW)
-		allLines = append(allLines, strings.Split(r, "\n")...)
-	}
-
-	// scrollOffset = lines from bottom to skip
-	maxOff := len(allLines) - msgH
-	if maxOff < 0 {
-		maxOff = 0
-	}
-	if m.scrollOffset > maxOff {
-		m.scrollOffset = maxOff
-	}
-	if m.scrollOffset < 0 {
-		m.scrollOffset = 0
-	}
-	end := len(allLines) - m.scrollOffset
-	start := end - msgH
-	if start < 0 {
-		start = 0
-	}
-	if end > len(allLines) {
-		end = len(allLines)
-	}
-	if start > end {
-		start = end
-	}
-
-	var body strings.Builder
-	for _, line := range allLines[start:end] {
-		body.WriteString(line)
-		body.WriteString("\n")
-	}
-	for i := end - start; i < msgH; i++ {
-		body.WriteString(strings.Repeat(" ", msgW) + "\n")
-	}
-
-	msgs := lipgloss.NewStyle().Background(bg).Width(msgW).Render(body.String())
-
-	if m.sidebarConfig && m.sidebarStep > 0 {
-		msgs = m.sidebarDropdown(msgW, msgH)
-	}
-
-	mainCol := lipgloss.JoinVertical(lipgloss.Top, hdr, msgs, inp)
-
-	if m.sidebar {
-		return lipgloss.JoinHorizontal(lipgloss.Top, mainCol, m.sideView())
-	}
-	return mainCol
-}
-
-func streamTickCmd() tea.Cmd {
-	return tea.Tick(15*time.Millisecond, func(t time.Time) tea.Msg {
-		return streamTickMsg{}
-	})
 }
 
 func main() {

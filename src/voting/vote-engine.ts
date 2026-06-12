@@ -38,6 +38,10 @@ export function aggregatePlanVotes(
     avgScores.set(planId, avg);
   }
 
+  if (avgScores.size === 0) {
+    throw new Error("No plan votes were cast");
+  }
+
   const sortedPlans = [...avgScores.entries()].sort((a, b) => b[1] - a[1]);
 
   if (sortedPlans.length < 2) {
@@ -78,6 +82,10 @@ export function aggregateExecutorVotes(
     avgScores.set(executor, avg);
   }
 
+  if (avgScores.size === 0) {
+    throw new Error("No executor votes were cast");
+  }
+
   const winner = [...avgScores.entries()].sort((a, b) => b[1] - a[1])[0][0];
   return { winner, scores: avgScores };
 }
@@ -100,6 +108,10 @@ export function aggregateBugFixVotes(
   for (const [fixId, scores] of fixScores) {
     const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
     avgScores.set(fixId, avg);
+  }
+
+  if (avgScores.size === 0) {
+    throw new Error("No bug fix votes were cast");
   }
 
   const sortedFixes = [...avgScores.entries()].sort((a, b) => b[1] - a[1]);

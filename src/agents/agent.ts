@@ -1,7 +1,27 @@
 import crypto from "crypto";
 import { LLMProvider } from "../providers/base.js";
-import { TaskBrief, Plan, PlanSchema, PlanVote, PlanVoteSchema, ExecutorVote, ExecutorVoteSchema, PeerReview, PeerReviewSchema } from "../voting/schemas.js";
+import { TaskBrief, Plan, PlanSchema, PlanStep, PlanVote, PlanVoteSchema, ExecutorVote, ExecutorVoteSchema, PeerReview, PeerReviewSchema, ToolCall, ToolCallSchema } from "../voting/schemas.js";
 import { AgentConfig } from "../voting/schemas.js";
+
+function safeParseJSON(raw: string): unknown {
+  let cleaned = raw;
+  const jsonFence = /^```json\s*\n?([\s\S]*?)\n?```\s*$/i;
+  const anyFence = /^```\s*\n?([\s\S]*?)\n?```\s*$/;
+  if (jsonFence.test(cleaned)) {
+    cleaned = cleaned.replace(jsonFence, "$1");
+  } else if (anyFence.test(cleaned)) {
+    cleaned = cleaned.replace(anyFence, "$1");
+  }
+  cleaned = cleaned.trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    const preview = raw.slice(0, 100).replace(/\n/g, "\\n");
+    throw new SyntaxError(
+      `Failed to parse LLM response as JSON. Raw preview (first 100 chars): "${preview}". Error: ${(e as Error).message}`
+    );
+  }
+}
 
 export class Agent {
   public readonly name: string;
@@ -61,7 +81,7 @@ Generate a structured plan with the following JSON schema:
     const systemPrompt = this.buildSystemPrompt("plan_generation", `Specialty: ${this.specialty}\nTask type: ${taskBrief.classified_type}`);
     const response = await this.llmProvider.generate(prompt, systemPrompt);
 
-    const parsed = JSON.parse(response.content);
+    const parsed = safeParseJSON(response.content) as Record<string, unknown>;
     parsed.agent = this.name;
     parsed.plan_id = parsed.plan_id || crypto.randomUUID();
 
@@ -100,7 +120,7 @@ Scoring dimensions:
     const systemPrompt = this.buildSystemPrompt("plan_vote", `Specialty: ${this.specialty}`);
     const response = await this.llmProvider.generate(prompt, systemPrompt);
 
-    const parsed = JSON.parse(response.content);
+    const parsed = safeParseJSON(response.content) as Record<string, unknown>;
     parsed.voter = this.name;
 
     return PlanVoteSchema.parse(parsed);
@@ -135,7 +155,7 @@ Vote for the best agent to EXECUTE (implement) this plan with this JSON:
     const systemPrompt = this.buildSystemPrompt("executor_vote", `Specialty: ${this.specialty}`);
     const response = await this.llmProvider.generate(prompt, systemPrompt);
 
-    const parsed = JSON.parse(response.content);
+    const parsed = safeParseJSON(response.content) as Record<string, unknown>;
     parsed.voter = this.name;
 
     return ExecutorVoteSchema.parse(parsed);
@@ -165,11 +185,48 @@ Propose a bug fix plan with this JSON:
     const systemPrompt = this.buildSystemPrompt("bug_fix", `Specialty: ${this.specialty}`);
     const response = await this.llmProvider.generate(prompt, systemPrompt);
 
-    const parsed = JSON.parse(response.content);
+    const parsed = safeParseJSON(response.content) as Record<string, unknown>;
     parsed.agent = this.name;
     parsed.plan_id = parsed.plan_id || crypto.randomUUID();
 
     return PlanSchema.parse(parsed);
+  }
+
+  async executeStep(step: PlanStep, taskBrief: TaskBrief): Promise<ToolCall> {
+    const toolsList = [
+      "read_file - Read the contents of a file at a given path",
+      "write_file - Write new content to a file at a given path",
+      "edit_file - Make targeted edits to an existing file",
+      "run_command - Execute a shell command",
+      "run_tests - Run the test suite",
+      "search_codebase - Search the codebase for symbols or patterns",
+      "fetch_url - Fetch content from a URL",
+    ].join("\n");
+
+    const prompt = `You are executing step ${step.step} of an implementation plan.
+
+Task: ${taskBrief.raw_input}
+
+Step to execute:
+  ${step.step}. ${step.action}
+  ${step.target_file ? `Target file: ${step.target_file}` : ""}
+
+Available tools:
+${toolsList}
+
+Respond with a JSON object representing the tool call that will execute this step:
+{
+  "tool": "<tool_name>",
+  "args": { <tool-specific arguments> }
+}
+
+Choose the most appropriate tool and arguments for this step. Consider the task context, the step description, and the target file if specified.`;
+
+    const systemPrompt = this.buildSystemPrompt("execution", `Specialty: ${this.specialty}\nTask: ${taskBrief.raw_input}`);
+    const response = await this.llmProvider.generate(prompt, systemPrompt);
+
+    const parsed = safeParseJSON(response.content) as Record<string, unknown>;
+    return ToolCallSchema.parse(parsed);
   }
 
   async acknowledgeDissent(dissentVotes: PlanVote[], winningPlan: Plan): Promise<string> {
@@ -207,7 +264,7 @@ Provide a peer review with this JSON:
 }`;
 
     const response = await this.llmProvider.generate(prompt);
-    const parsed = JSON.parse(response.content);
+    const parsed = safeParseJSON(response.content) as Record<string, unknown>;
     parsed.reviewer = this.name;
 
     return PeerReviewSchema.parse(parsed);
