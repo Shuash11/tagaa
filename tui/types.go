@@ -68,6 +68,7 @@ type model struct {
 	cmdMode       bool
 	cmdCur        int
 	cmdSessions   []Session
+	thinking      bool
 	w, h          int
 	ready         bool
 }

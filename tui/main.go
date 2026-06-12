@@ -96,7 +96,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.streamText = msg.content
 		m.streamPos = 0
-		m.phase = msg.agentName
+		if m.thinking {
+			m.phase = "💬 " + msg.agentName
+		} else {
+			m.phase = msg.agentName
+		}
 		m.scrollOffset = 0
 		m.messages = append(m.messages, Message{Kind: MsgAgent, AgentName: msg.agentName, Content: "", Color: clr})
 		m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
@@ -155,6 +159,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+b":
 			m.sidebar = !m.sidebar
+			return m, nil
+		case "ctrl+t":
+			m.thinking = !m.thinking
 			return m, nil
 		case "ctrl+s":
 			m.settings = true
@@ -237,7 +244,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.messages = append(m.messages, Message{Kind: MsgUser, Content: t})
 				m.input = ""
 				m.isRunning = true
-				m.phase = m.nextAgentName()
+				if m.thinking {
+					m.phase = "🤔 " + m.nextAgentName()
+				} else {
+					m.phase = m.nextAgentName()
+				}
 				m.scrollOffset = 0
 				ctx, cancel := context.WithCancel(context.Background())
 				m.cancelFn = cancel
@@ -299,12 +310,16 @@ func (m model) View() string {
 
 	phaseStr := ""
 	if m.phase != "" {
-		phaseStr = lipgloss.NewStyle().Foreground(blueC).Render(" [" + m.phase + "]")
 		if m.isRunning {
 			phaseStr = lipgloss.NewStyle().Foreground(greenC).Render(" [" + m.phase + " ◆]")
+		} else {
+			phaseStr = lipgloss.NewStyle().Foreground(blueC).Render(" [" + m.phase + "]")
 		}
 	} else {
 		phaseStr = lipgloss.NewStyle().Faint(true).Foreground(muteC).Render(" [idle]")
+	}
+	if m.thinking {
+		phaseStr += lipgloss.NewStyle().Foreground(accentC).Render(" 🧠")
 	}
 	if m.scrollOffset > 0 {
 		phaseStr += lipgloss.NewStyle().Foreground(accentC).Render(fmt.Sprintf(" ↑%d", m.scrollOffset))

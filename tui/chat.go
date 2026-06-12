@@ -207,6 +207,9 @@ func sendChatCmd(m model, ctx context.Context) tea.Cmd {
 			}
 		}
 	}
+	if m.thinking {
+		systemParts = append([]string{"You are a thorough, step-by-step thinker. Always reason through problems carefully before answering. Show your chain of thought."}, systemParts...)
+	}
 	if len(systemParts) > 0 {
 		sys := strings.Join(systemParts, "\n")
 		openAIMsgs = append([]openAIMsg{{Role: "system", Content: sys}}, openAIMsgs...)
