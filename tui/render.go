@@ -64,7 +64,7 @@ func (m model) sidebarDropdown(w, h int) string {
 	agent := m.agents[m.sidebarSel]
 	if m.sidebarStep == 1 {
 		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(accentC).Render("Select Provider"))
-		b.WriteString(lipgloss.NewStyle().Faint(true).Foreground(muteC).Render(" for " + agent.name))
+		b.WriteString(lipgloss.NewStyle().Faint(true).Foreground(muteC).Render(" for " + agent.Name))
 		b.WriteString("\n\n")
 		for i, p := range providers {
 			if m.apiKeys[p.id] == "" {
@@ -84,7 +84,7 @@ func (m model) sidebarDropdown(w, h int) string {
 		b.WriteString(lipgloss.NewStyle().Faint(true).Foreground(muteC).Render("↑↓ Enter Esc"))
 	} else if m.sidebarStep == 2 {
 		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(accentC).Render("Select Model"))
-		b.WriteString(lipgloss.NewStyle().Faint(true).Foreground(muteC).Render(" for " + agent.name))
+		b.WriteString(lipgloss.NewStyle().Faint(true).Foreground(muteC).Render(" for " + agent.Name))
 		b.WriteString("\n\n")
 		models := m.models[m.sidebarProv]
 		if len(models) > 0 {
@@ -142,11 +142,11 @@ func (m model) sideView() string {
 		pad(lipgloss.NewStyle().Foreground(muteC).Render("  (none configured)"))
 	} else {
 		for i, a := range m.agents {
-			pName := a.provider
+			pName := a.Provider
 			if pName == "" {
 				pName = "no provider"
 			}
-			modName := a.model
+			modName := a.Model
 			if modName == "" {
 				modName = "no model"
 			}
@@ -156,7 +156,7 @@ func (m model) sideView() string {
 			} else {
 				prefix = "  "
 			}
-			pad(fmt.Sprintf("%s%s", prefix, a.name))
+			pad(fmt.Sprintf("%s%s", prefix, a.Name))
 			pad(lipgloss.NewStyle().Foreground(muteC).Width(18).Render(fmt.Sprintf("    %s", pName)))
 			pad(lipgloss.NewStyle().Foreground(muteC).Width(18).Render(fmt.Sprintf("    %s", modName)))
 		}

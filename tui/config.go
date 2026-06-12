@@ -28,5 +28,19 @@ func loadConfig() (map[string]string, []agentCfg) {
 	if data.APIKeys == nil {
 		data.APIKeys = make(map[string]string)
 	}
-	return data.APIKeys, data.Agents
+	// migration: old config format had unexported fields,
+	// so Enabled defaulted to false — auto-enable any agent with a name
+	for i := range data.Agents {
+		if data.Agents[i].Name != "" && !data.Agents[i].Enabled {
+			data.Agents[i].Enabled = true
+		}
+	}
+	// migration: remove empty-agent artifacts (old config with {} entries)
+	clean := make([]agentCfg, 0, len(data.Agents))
+	for _, a := range data.Agents {
+		if a.Name != "" || a.Provider != "" || a.Model != "" {
+			clean = append(clean, a)
+		}
+	}
+	return data.APIKeys, clean
 }

@@ -92,10 +92,10 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "enter":
 				if strings.TrimSpace(m.agentTemp) != "" {
-					m.agents[m.agentCur].name = strings.TrimSpace(m.agentTemp)
+					m.agents[m.agentCur].Name = strings.TrimSpace(m.agentTemp)
 				}
 				m.agentField = 1
-				m.agentTemp = m.agents[m.agentCur].provider
+				m.agentTemp = m.agents[m.agentCur].Provider
 				saveConfig(m)
 			case "esc":
 				m.agentEdit = false
@@ -113,11 +113,11 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "enter":
 				if m.agentTemp != "" {
-					m.agents[m.agentCur].provider = m.agentTemp
-					m.agents[m.agentCur].model = ""
+					m.agents[m.agentCur].Provider = m.agentTemp
+					m.agents[m.agentCur].Model = ""
 				}
 				m.agentField = 2
-				m.agentTemp = m.agents[m.agentCur].model
+				m.agentTemp = m.agents[m.agentCur].Model
 				saveConfig(m)
 			case "esc":
 				m.agentEdit = false
@@ -141,11 +141,11 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.agentTemp = providers[idx].id
 			}
 		case 2:
-			models := m.models[m.agents[m.agentCur].provider]
+			models := m.models[m.agents[m.agentCur].Provider]
 			switch msg.String() {
 			case "enter":
 				if m.agentTemp != "" {
-					m.agents[m.agentCur].model = m.agentTemp
+					m.agents[m.agentCur].Model = m.agentTemp
 					saveConfig(m)
 				}
 				m.agentEdit = false
@@ -203,12 +203,12 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.agentCur >= 0 && m.agentCur < len(m.agents) {
 			m.agentEdit = true
 			m.agentField = 0
-			m.agentTemp = m.agents[m.agentCur].name
+			m.agentTemp = m.agents[m.agentCur].Name
 		}
 	case "a":
 		m.agents = append(m.agents, agentCfg{
-			name:    fmt.Sprintf("Agent %d", len(m.agents)+1),
-			enabled: true,
+			Name:    fmt.Sprintf("Agent %d", len(m.agents)+1),
+			Enabled: true,
 		})
 		m.agentCur = len(m.agents) - 1
 		saveConfig(m)
@@ -377,11 +377,11 @@ func (m model) agentsView(msgW, msgH int) string {
 			color = blueC
 		}
 
-		pName := a.provider
+		pName := a.Provider
 		if pName == "" {
 			pName = "(none)"
 		}
-		mod := a.model
+		mod := a.Model
 		if mod == "" {
 			mod = "(none)"
 		}
@@ -401,14 +401,14 @@ func (m model) agentsView(msgW, msgH int) string {
 					}
 				}
 				selProv := " ▸ " + pDisplay
-				line := fmt.Sprintf("%s%-16s %-14s %s", cursor, a.name, selProv, mod)
+				line := fmt.Sprintf("%s%-16s %-14s %s", cursor, a.Name, selProv, mod)
 				b.WriteString(lipgloss.NewStyle().Foreground(greenC).Render(line))
 			case 2:
-				line := fmt.Sprintf("%s%-16s %-14s %s", cursor, a.name, pName, " ▸ "+m.agentTemp)
+				line := fmt.Sprintf("%s%-16s %-14s %s", cursor, a.Name, pName, " ▸ "+m.agentTemp)
 				b.WriteString(lipgloss.NewStyle().Foreground(greenC).Render(line))
 			}
 		} else {
-			line := fmt.Sprintf("%s%-16s %-14s %s", cursor, a.name, pName, mod)
+			line := fmt.Sprintf("%s%-16s %-14s %s", cursor, a.Name, pName, mod)
 			b.WriteString(lipgloss.NewStyle().Foreground(color).Render(line))
 		}
 		b.WriteString("\n")
@@ -427,7 +427,7 @@ func (m model) agentsView(msgW, msgH int) string {
 				}
 			}
 			if m.agentField == 2 {
-				models := m.models[m.agents[m.agentCur].provider]
+				models := m.models[m.agents[m.agentCur].Provider]
 				if len(models) > 0 {
 					for _, mn := range models {
 						sel := "  "
