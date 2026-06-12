@@ -223,16 +223,16 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		})
 		m.agentCur = len(m.agents) - 1
 		saveConfig(m)
-case "d":
-		if len(m.agents) == 0 {
-			return m, nil
-		}
-		saveConfig(m)
-		m.agents = append(m.agents[:m.agentCur], m.agents[m.agentCur+1:]...)
-		if m.agentCur >= len(m.agents) && len(m.agents) > 0 {
-			m.agentCur = len(m.agents) - 1
-		}
-		return m, nil
+    case "d":
+        if len(m.agents) == 0 {
+            return m, nil
+        }
+        m.agents = append(m.agents[:m.agentCur], m.agents[m.agentCur+1:]...)
+        if m.agentCur >= len(m.agents) && len(m.agents) > 0 {
+            m.agentCur = len(m.agents) - 1
+        }
+        saveConfig(m)
+        return m, nil
 	case "o":
 		if m.agentCur >= 0 && m.agentCur < len(m.agents) {
 			if m.agents[m.agentCur].IsOrchestrator {
@@ -245,7 +245,7 @@ case "d":
 			}
 			saveConfig(m)
 		}
-return m, nil
+		return m, nil
 	case "up":
 		if m.agentCur > 0 {
 			m.agentCur--

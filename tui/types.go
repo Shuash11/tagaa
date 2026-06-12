@@ -217,6 +217,9 @@ type model struct {
 	agents        []agentCfg
 	messages      []Message
 	input         string
+	orchMode      bool
+	orchInput     string
+	orchMessages  []Message
 	apiKeys       map[string]string
 	models        map[string][]string
 	modelsLoading map[string]bool

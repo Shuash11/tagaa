@@ -85,6 +85,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case chatRespMsg:
 		if !m.isRunning {
+			// if in orchMode, append to orchMessages
+			if m.orchMode {
+				m.orchMessages = append(m.orchMessages, Message{Kind: MsgAgent, AgentName: msg.agentName, Content: msg.content, Color: lipgloss.Color("#00CED1")})
+				m.orchMessages = append(m.orchMessages, Message{Kind: MsgSystem, Content: ""})
+				return m, nil
+			}
 			return m, nil
 		}
 		// Remove agent from pendingAgents
@@ -228,6 +234,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.sidebarConfig {
 			return m.updSidebarConfig(msg)
 		}
+		// orchestrator chat toggle
+		if msg.String() == "ctrl+o" {
+			m.orchMode = !m.orchMode
+			if m.orchMode {
+				m.orchInput = ""
+				m.orchMessages = nil
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "ctrl+c", "ctrl+d":
 			saveSessions(m.messages)
@@ -363,6 +378,16 @@ m.pendingAgents = nil
 				return m, nil
 			}
 			if m.isRunning {
+				return m, nil
+			}
+			if m.orchMode {
+				if t := strings.TrimSpace(m.orchInput); t != "" {
+					m.orchMessages = append(m.orchMessages, Message{Kind: MsgUser, Content: t})
+					m.orchInput = ""
+					ctx, cancel := context.WithCancel(context.Background())
+					m.cancelFn = cancel
+					return m, sendOrchMessage(m, ctx, t)
+				}
 				return m, nil
 			}
 			if t := strings.TrimSpace(m.input); t != "" {

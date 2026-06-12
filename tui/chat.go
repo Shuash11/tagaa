@@ -206,6 +206,20 @@ func sendGroupThinkCmd(m model, ctx context.Context) tea.Cmd {
 	return pipelinePollCmd(ch)
 }
 
+// sendOrchMessage sends a direct message to the orchestrator and returns a tea.Cmd
+func sendOrchMessage(m model, ctx context.Context, text string) tea.Cmd {
+	if orch, ok := m.orchestrator(); ok {
+		return func() tea.Msg {
+			resp, err := queryAgentSimple(ctx, orch, m.apiKeys, "You are an orchestrator.", text)
+			if err != nil {
+				return chatErrMsg{agentName: orch.Name, content: err.Error()}
+			}
+			return chatRespMsg{agentName: orch.Name, content: resp, provider: orch.Provider}
+		}
+	}
+	return func() tea.Msg { return chatErrMsg{content: "No orchestrator configured"} }
+}
+
 func pipelinePollCmd(ch chan pipelineBatchMsg) tea.Cmd {
 	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
 		select {
