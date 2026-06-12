@@ -176,6 +176,15 @@ func sendGroupThinkCmd(m model, ctx context.Context) tea.Cmd {
 
 	ch := m.pipelineCh
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				ch <- pipelineBatchMsg{
+					phase:    "error",
+					messages: []Message{{Kind: MsgError, Content: fmt.Sprintf("Pipeline panic: %v", r)}},
+					done:     true,
+				}
+			}
+		}()
 		p := NewPipeline(agents, m.apiKeys)
 		if hasOrch {
 			p.orchestrator = orch

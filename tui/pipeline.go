@@ -20,6 +20,8 @@ type Pipeline struct {
 	executionOutput string
 	orchestrator    agentCfg
 	workers         []agentCfg
+	orchPlan        string
+	workerOutputs   map[string]string
 }
 
 func NewPipeline(agents []agentCfg, apiKeys map[string]string) *Pipeline {
@@ -214,6 +216,7 @@ func (p *Pipeline) runOrchPlanPhase(ctx context.Context, task string) []Message 
 		return msgs
 	}
 
+	p.orchPlan = text
 	msgs = append(msgs, Message{Kind: MsgPlan, AgentName: p.orchestrator.Name, Content: text, Color: p.agentColor(p.orchestrator.Name)})
 	msgs = append(msgs, Message{Kind: MsgSystem, Content: ""})
 	return msgs
@@ -230,11 +233,12 @@ func (p *Pipeline) runOrchExecPhase(ctx context.Context) []Message {
 		err  error
 	}
 
+	p.workerOutputs = make(map[string]string)
 	ch := make(chan workerResult, len(p.workers))
 	for _, w := range p.workers {
 		go func(agent agentCfg) {
 			system := "You are a worker agent. Execute your assigned subtask. Be thorough and provide clear output."
-			userMsg := "Execute your part of the plan. Provide your implementation or answer."
+			userMsg := "The orchestrator created this plan:\n\n" + p.orchPlan + "\n\nExecute your part of the plan. Provide your implementation or answer."
 			text, err := queryAgentSimple(ctx, agent, p.apiKeys, system, userMsg)
 			ch <- workerResult{name: agent.Name, clr: p.agentColor(agent.Name), text: text, err: err}
 		}(w)
@@ -246,6 +250,7 @@ func (p *Pipeline) runOrchExecPhase(ctx context.Context) []Message {
 			msgs = append(msgs, Message{Kind: MsgError, Content: r.name + ": " + r.err.Error()})
 			continue
 		}
+		p.workerOutputs[r.name] = r.text
 		msgs = append(msgs, Message{Kind: MsgAgent, AgentName: r.name, Content: r.text, Color: r.clr})
 		msgs = append(msgs, Message{Kind: MsgSystem, Content: ""})
 	}
@@ -264,6 +269,19 @@ func (p *Pipeline) runOrchReviewPhase(ctx context.Context) []Message {
 
 	system := "You are the orchestrator. Review all worker outputs, combine them into a final response, and provide feedback."
 	userMsg := "Review the execution outputs from all workers. Combine their work into a cohesive final result. Note any gaps or issues."
+
+	var workerSummary strings.Builder
+	for name, output := range p.workerOutputs {
+		workerSummary.WriteString("\n--- " + name + " ---\n")
+		if len(output) > 500 {
+			workerSummary.WriteString(output[:500] + "...\n")
+		} else {
+			workerSummary.WriteString(output + "\n")
+		}
+	}
+	if workerSummary.Len() > 0 {
+		userMsg += "\n\nWorker outputs:" + workerSummary.String()
+	}
 
 	text, err := queryAgentSimple(ctx, p.orchestrator, p.apiKeys, system, userMsg)
 	if err != nil {

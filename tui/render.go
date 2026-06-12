@@ -239,10 +239,11 @@ func (m model) renderMessage(msg Message, idx int, width int) string {
 		var body strings.Builder
 		for _, line := range lines {
 			display := line
-			if len(display) > innerW {
-				display = display[:innerW]
+			runes := []rune(display)
+			if len(runes) > innerW {
+				display = string(runes[:innerW])
 			}
-			padding := innerW - len(display)
+			padding := innerW - lipgloss.Width(display)
 			body.WriteString("│ ")
 			body.WriteString(display)
 			body.WriteString(strings.Repeat(" ", padding))
@@ -320,10 +321,11 @@ func (m model) renderMessage(msg Message, idx int, width int) string {
 		var body strings.Builder
 		for _, line := range lines {
 			display := line
-			if len(display) > innerW {
-				display = display[:innerW]
+			runes := []rune(display)
+			if len(runes) > innerW {
+				display = string(runes[:innerW])
 			}
-			padding := innerW - len(display)
+			padding := innerW - lipgloss.Width(display)
 			body.WriteString("│ ")
 			body.WriteString(display)
 			body.WriteString(strings.Repeat(" ", padding))
@@ -362,13 +364,15 @@ func (m model) sidebarDropdown(w, h int) string {
 		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(accentC).Render("Select Provider"))
 		b.WriteString(lipgloss.NewStyle().Faint(true).Foreground(muteC).Render(" for " + agent.Name))
 		b.WriteString("\n\n")
-		for i, p := range providers {
+		filteredIdx := -1
+		for _, p := range providers {
 			if m.apiKeys[p.id] == "" {
 				continue
 			}
+			filteredIdx++
 			sel := "  "
 			color := lipgloss.Color("#E6E6E6")
-			if i == m.sidebarCur {
+			if filteredIdx == m.sidebarCur {
 				sel = "▸ "
 				color = accentC
 			}
@@ -457,7 +461,11 @@ func (m model) sideView() string {
 			if a.IsOrchestrator {
 				role = "★ "
 			}
-			pad(fmt.Sprintf("%s%s%s", prefix, role, a.Name))
+			nameStyle := lipgloss.NewStyle()
+			if !a.Enabled {
+				nameStyle = lipgloss.NewStyle().Faint(true)
+			}
+			pad(fmt.Sprintf("%s%s%s", prefix, role, nameStyle.Render(a.Name)))
 			pad(lipgloss.NewStyle().Foreground(muteC).Width(18).Render(fmt.Sprintf("    %s", pName)))
 			pad(lipgloss.NewStyle().Foreground(muteC).Width(18).Render(fmt.Sprintf("    %s", modName)))
 		}
