@@ -5,10 +5,10 @@ import "github.com/charmbracelet/lipgloss"
 type provider struct{ id, label string }
 
 type agentCfg struct {
-	name     string
-	provider string
-	model    string
-	enabled  bool
+	Name     string `json:"name"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	Enabled  bool   `json:"enabled"`
 }
 
 type MsgKind int

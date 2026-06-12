@@ -72,8 +72,8 @@ func (m model) updSidebarConfig(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else if m.sidebarStep == 1 {
 			pid := providers[m.sidebarCur].id
 			m.sidebarProv = pid
-			m.agents[m.sidebarSel].provider = pid
-			m.agents[m.sidebarSel].model = ""
+			m.agents[m.sidebarSel].Provider = pid
+			m.agents[m.sidebarSel].Model = ""
 			saveConfig(m)
 			models := m.models[pid]
 			if len(models) > 0 {
@@ -87,7 +87,7 @@ func (m model) updSidebarConfig(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else if m.sidebarStep == 2 {
 			models := m.models[m.sidebarProv]
 			if m.sidebarCur < len(models) {
-				m.agents[m.sidebarSel].model = models[m.sidebarCur]
+				m.agents[m.sidebarSel].Model = models[m.sidebarCur]
 				saveConfig(m)
 			}
 			m.sidebarConfig = false

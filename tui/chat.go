@@ -93,7 +93,7 @@ func sendChatCmd(m model) tea.Cmd {
 	var agent agentCfg
 	found := false
 	for _, a := range m.agents {
-		if a.enabled && a.provider != "" && a.model != "" && m.apiKeys[a.provider] != "" {
+		if a.Enabled && a.Provider != "" && a.Model != "" && m.apiKeys[a.Provider] != "" {
 			agent = a
 			found = true
 			break
@@ -103,18 +103,18 @@ func sendChatCmd(m model) tea.Cmd {
 		msg := "No ready agent:"
 		for _, a := range m.agents {
 			why := ""
-			if !a.enabled {
+			if !a.Enabled {
 				why = "disabled"
-			} else if a.provider == "" {
+			} else if a.Provider == "" {
 				why = "no provider"
-			} else if a.model == "" {
-				why = "no model for " + a.provider
-			} else if m.apiKeys[a.provider] == "" {
-				why = "no API key for " + a.provider
+			} else if a.Model == "" {
+				why = "no model for " + a.Provider
+			} else if m.apiKeys[a.Provider] == "" {
+				why = "no API key for " + a.Provider
 			} else {
 				why = "unknown"
 			}
-			msg += " [" + a.name + ": " + why + "]"
+			msg += " [" + a.Name + ": " + why + "]"
 		}
 		if len(msg) > 120 {
 			msg = msg[:117] + "..."
@@ -124,13 +124,13 @@ func sendChatCmd(m model) tea.Cmd {
 		}
 	}
 
-	base, ok := baseURLs[agent.provider]
+	base, ok := baseURLs[agent.Provider]
 	if !ok {
 		return func() tea.Msg {
-			return chatErrMsg{content: "Unknown provider: " + agent.provider}
+			return chatErrMsg{content: "Unknown provider: " + agent.Provider}
 		}
 	}
-	key := m.apiKeys[agent.provider]
+	key := m.apiKeys[agent.Provider]
 
 	type chatMsg struct {
 		Role    string `json:"role"`
@@ -161,14 +161,14 @@ func sendChatCmd(m model) tea.Cmd {
 		var req *http.Request
 		var err error
 
-		if agent.provider == "anthropic" {
+		if agent.Provider == "anthropic" {
 			type anthropicReq struct {
 				Model     string    `json:"model"`
 				Messages  []chatMsg `json:"messages"`
 				MaxTokens int       `json:"max_tokens"`
 			}
 			reqBody, _ = json.Marshal(anthropicReq{
-				Model:     agent.model,
+				Model:     agent.Model,
 				Messages:  apiMsgs,
 				MaxTokens: 4096,
 			})
@@ -179,7 +179,7 @@ func sendChatCmd(m model) tea.Cmd {
 			req.Header.Set("x-api-key", key)
 			req.Header.Set("anthropic-version", "2023-06-01")
 			req.Header.Set("Content-Type", "application/json")
-		} else if agent.provider == "gemini" {
+		} else if agent.Provider == "gemini" {
 			type geminiPart struct {
 				Text string `json:"text"`
 			}
@@ -196,7 +196,7 @@ func sendChatCmd(m model) tea.Cmd {
 				}
 			}
 			reqBody, _ = json.Marshal(geminiReq{Contents: geminiMsgs})
-			url := fmt.Sprintf("%s/v1/models/%s:generateContent?key=%s", base, agent.model, key)
+			url := fmt.Sprintf("%s/v1/models/%s:generateContent?key=%s", base, agent.Model, key)
 			req, err = http.NewRequest("POST", url, strings.NewReader(string(reqBody)))
 			if err != nil {
 				return chatErrMsg{content: err.Error()}
@@ -207,7 +207,7 @@ func sendChatCmd(m model) tea.Cmd {
 				Model    string    `json:"model"`
 				Messages []chatMsg `json:"messages"`
 			}
-			reqBody, _ = json.Marshal(openAIReq{Model: agent.model, Messages: apiMsgs})
+			reqBody, _ = json.Marshal(openAIReq{Model: agent.Model, Messages: apiMsgs})
 			req, err = http.NewRequest("POST", base+"/v1/chat/completions", strings.NewReader(string(reqBody)))
 			if err != nil {
 				return chatErrMsg{content: err.Error()}
@@ -243,7 +243,7 @@ func sendChatCmd(m model) tea.Cmd {
 			return chatErrMsg{content: short}
 		}
 
-		if agent.provider == "anthropic" {
+		if agent.Provider == "anthropic" {
 			var anthropicResp struct {
 				Content []struct {
 					Text string `json:"text"`
@@ -253,12 +253,12 @@ func sendChatCmd(m model) tea.Cmd {
 				return chatErrMsg{content: "Failed to parse Anthropic response"}
 			}
 			if len(anthropicResp.Content) > 0 {
-				return chatRespMsg{agentName: agent.name, content: anthropicResp.Content[0].Text, provider: agent.provider}
+				return chatRespMsg{agentName: agent.Name, content: anthropicResp.Content[0].Text, provider: agent.Provider}
 			}
 			return chatErrMsg{content: "Empty Anthropic response"}
 		}
 
-		if agent.provider == "gemini" {
+		if agent.Provider == "gemini" {
 			var geminiResp struct {
 				Candidates []struct {
 					Content struct {
@@ -272,7 +272,7 @@ func sendChatCmd(m model) tea.Cmd {
 				return chatErrMsg{content: "Failed to parse Gemini response"}
 			}
 			if len(geminiResp.Candidates) > 0 && len(geminiResp.Candidates[0].Content.Parts) > 0 {
-				return chatRespMsg{agentName: agent.name, content: geminiResp.Candidates[0].Content.Parts[0].Text, provider: agent.provider}
+				return chatRespMsg{agentName: agent.Name, content: geminiResp.Candidates[0].Content.Parts[0].Text, provider: agent.Provider}
 			}
 			return chatErrMsg{content: "Empty Gemini response"}
 		}
@@ -288,7 +288,7 @@ func sendChatCmd(m model) tea.Cmd {
 			return chatErrMsg{content: "Failed to parse response"}
 		}
 		if len(openAIResp.Choices) > 0 {
-			return chatRespMsg{agentName: agent.name, content: openAIResp.Choices[0].Message.Content, provider: agent.provider}
+			return chatRespMsg{agentName: agent.Name, content: openAIResp.Choices[0].Message.Content, provider: agent.Provider}
 		}
 		return chatErrMsg{content: "Empty response"}
 	}

@@ -59,7 +59,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.phase = ""
 		clr := lipgloss.Color("#00CED1")
 		for i, a := range m.agents {
-			if a.name == msg.agentName {
+			if a.Name == msg.agentName {
 				clr = agentColors[i%len(agentColors)]
 				break
 			}
