@@ -90,13 +90,37 @@ func fetchModelsCmd(id, key string) tea.Cmd {
 	}
 }
 
-func sendGroupThinkCmd(m model, ctx context.Context) tea.Cmd {
+func (m model) orchestrator() (agentCfg, bool) {
+	for _, a := range m.agents {
+		if a.IsOrchestrator && a.Enabled && a.Provider != "" && a.Model != "" && m.apiKeys[a.Provider] != "" {
+			return a, true
+		}
+	}
+	return agentCfg{}, false
+}
+
+func (m model) readyAgents() []agentCfg {
 	var agents []agentCfg
 	for _, a := range m.agents {
 		if a.Enabled && a.Provider != "" && a.Model != "" && m.apiKeys[a.Provider] != "" {
 			agents = append(agents, a)
 		}
 	}
+	return agents
+}
+
+func (m model) workers() []agentCfg {
+	var workers []agentCfg
+	for _, a := range m.readyAgents() {
+		if !a.IsOrchestrator {
+			workers = append(workers, a)
+		}
+	}
+	return workers
+}
+
+func sendGroupThinkCmd(m model, ctx context.Context) tea.Cmd {
+	agents := m.readyAgents()
 	if len(agents) == 0 {
 		msg := "No ready agent:"
 		if len(m.agents) == 0 {
@@ -135,6 +159,9 @@ func sendGroupThinkCmd(m model, ctx context.Context) tea.Cmd {
 
 	if !isTaskRequest(task) && len(agents) > 0 {
 		a := agents[0]
+		if orch, ok := m.orchestrator(); ok {
+			a = orch
+		}
 		return func() tea.Msg {
 			text, err := queryAgentSimple(ctx, a, m.apiKeys, "You are a helpful AI assistant. Be conversational and concise.", task)
 			if err != nil {
@@ -144,9 +171,16 @@ func sendGroupThinkCmd(m model, ctx context.Context) tea.Cmd {
 		}
 	}
 
+	orch, hasOrch := m.orchestrator()
+	workers := m.workers()
+
 	ch := m.pipelineCh
 	go func() {
 		p := NewPipeline(agents, m.apiKeys)
+		if hasOrch {
+			p.orchestrator = orch
+		}
+		p.workers = workers
 		historyCopy := make([]Message, len(m.messages))
 		copy(historyCopy, m.messages)
 		p.history = historyCopy

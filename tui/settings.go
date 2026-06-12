@@ -223,15 +223,29 @@ func (m model) updAgentTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		})
 		m.agentCur = len(m.agents) - 1
 		saveConfig(m)
-	case "d":
+case "d":
 		if len(m.agents) == 0 {
 			return m, nil
 		}
+		saveConfig(m)
 		m.agents = append(m.agents[:m.agentCur], m.agents[m.agentCur+1:]...)
-		if m.agentCur >= len(m.agents) {
+		if m.agentCur >= len(m.agents) && len(m.agents) > 0 {
 			m.agentCur = len(m.agents) - 1
 		}
-		saveConfig(m)
+		return m, nil
+	case "o":
+		if m.agentCur >= 0 && m.agentCur < len(m.agents) {
+			if m.agents[m.agentCur].IsOrchestrator {
+				m.agents[m.agentCur].IsOrchestrator = false
+			} else {
+				for i := range m.agents {
+					m.agents[i].IsOrchestrator = false
+				}
+				m.agents[m.agentCur].IsOrchestrator = true
+			}
+			saveConfig(m)
+		}
+return m, nil
 	case "up":
 		if m.agentCur > 0 {
 			m.agentCur--
@@ -432,7 +446,11 @@ func (m model) agentsView(msgW, msgH int) string {
 				b.WriteString(lipgloss.NewStyle().Foreground(greenC).Render(line))
 			}
 		} else {
-			line := fmt.Sprintf("%s%-16s %-14s %s", cursor, a.Name, pName, mod)
+			role := "  "
+			if a.IsOrchestrator {
+				role = "★ "
+			}
+			line := fmt.Sprintf("%s%-16s %-14s %s", cursor+role, a.Name, pName, mod)
 			b.WriteString(lipgloss.NewStyle().Foreground(color).Render(line))
 		}
 		b.WriteString("\n")
@@ -487,7 +505,7 @@ func (m model) agentsView(msgW, msgH int) string {
 		}
 	} else {
 		b.WriteString(lipgloss.NewStyle().Faint(true).Foreground(muteC).Render(
-			"↑↓ select · Enter edit · [a]dd [d]elete · Tab: Keys",
+			"↑↓ select · Enter edit · [a]dd [d]elete [o]rchestrator · Tab: Keys",
 		))
 	}
 
