@@ -10,14 +10,26 @@ import (
 
 func initialModel() model {
 	apiKeys, agents := loadConfig()
-	return model{
-		agents:        agents,
-		messages: []Message{
+	sid, stime, sessionMsgs := loadLatestSession()
+
+	var msgs []Message
+	if len(sessionMsgs) > 0 {
+		msgs = sessionMsgs
+		msgs = append(msgs, Message{Kind: MsgSystem, Content: ""})
+	} else {
+		msgs = []Message{
 			{Kind: MsgSystem, Content: "◆ TAGAA v0.1.0 — Terminal Autonomous Group AI Assistant"},
 			{Kind: MsgSystem, Content: "◆ API keys and agents loaded from " + configFile},
 			{Kind: MsgSystem, Content: "  Ctrl+B toggle sidebar · Ctrl+S settings · Ctrl+E config"},
 			{Kind: MsgSystem, Content: ""},
-		},
+		}
+	}
+
+	return model{
+		sessionID:     sid,
+		sessionTime:   stime,
+		agents:        agents,
+		messages:      msgs,
 		apiKeys:       apiKeys,
 		models:        make(map[string][]string),
 		modelsLoading: make(map[string]bool),
@@ -84,6 +96,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "ctrl+c", "ctrl+d":
+			saveSessions(m.messages)
 			return m, tea.Quit
 		case "ctrl+b":
 			m.sidebar = !m.sidebar
@@ -172,6 +185,11 @@ func (m model) View() string {
 		phaseStr += lipgloss.NewStyle().Foreground(muteC).Render(fmt.Sprintf(" ↑%d", m.scrollOffset))
 	}
 
+	sessionStr := ""
+	if m.sessionID > 0 {
+		sessionStr = lipgloss.NewStyle().Faint(true).Foreground(muteC).Render(fmt.Sprintf("  #%d", m.sessionID))
+	}
+
 	hdr := lipgloss.NewStyle().
 		Background(bg).
 		BorderStyle(lipgloss.NormalBorder()).
@@ -180,6 +198,7 @@ func (m model) View() string {
 		PaddingLeft(1).
 		Render(lipgloss.NewStyle().Background(bg).Render(
 			lipgloss.NewStyle().Bold(true).Foreground(accentC).Render(" TAGAA") +
+				sessionStr +
 				phaseStr +
 				lipgloss.NewStyle().Faint(true).Render("  v0.1.0"),
 		))

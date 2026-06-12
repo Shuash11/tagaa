@@ -40,6 +40,8 @@ type model struct {
 	phase         string
 	isRunning     bool
 	scrollOffset  int
+	sessionID     int
+	sessionTime   string
 	sidebar       bool
 	sidebarConfig bool
 	sidebarSel    int
