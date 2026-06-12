@@ -10,13 +10,37 @@ import (
 func renderMessage(msg Message, width int) string {
 	switch msg.Kind {
 	case MsgUser:
-		return lipgloss.NewStyle().Bold(true).Foreground(accentC).Render("  You: ") +
-			lipgloss.NewStyle().Foreground(lipgloss.Color("#E6E6E6")).Render(msg.Content)
+		lines := strings.Split(msg.Content, "\n")
+		var b strings.Builder
+		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(accentC).Render("  ─ You"))
+		b.WriteString("\n")
+		for _, line := range lines {
+			trunc := line
+			if len(trunc) > width-10 {
+				trunc = trunc[:width-10]
+			}
+			b.WriteString(lipgloss.NewStyle().Foreground(accentC).Render("  │ "))
+			b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#E6E6E6")).Render(trunc))
+			b.WriteString("\n")
+		}
+		return strings.TrimRight(b.String(), "\n")
 
 	case MsgAgent:
-		badge := lipgloss.NewStyle().Foreground(msg.Color).Bold(true).Render("◆ " + msg.AgentName)
-		body := lipgloss.NewStyle().PaddingLeft(5).Width(width - 2).Render(msg.Content)
-		return badge + "\n" + body
+		barClr := msg.Color
+		barStyle := lipgloss.NewStyle().Foreground(barClr)
+		badge := barStyle.Bold(true).Render("  ◆ " + msg.AgentName)
+		lines := strings.Split(msg.Content, "\n")
+		var barBody strings.Builder
+		for _, line := range lines {
+			trunc := line
+			if len(trunc) > width-10 {
+				trunc = trunc[:width-10]
+			}
+			barBody.WriteString(barStyle.Render("  │ "))
+			barBody.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#E6E6E6")).Render(trunc))
+			barBody.WriteString("\n")
+		}
+		return badge + "\n" + strings.TrimRight(barBody.String(), "\n")
 
 	case MsgSystem:
 		return lipgloss.NewStyle().Foreground(muteC).Render("  " + msg.Content)
