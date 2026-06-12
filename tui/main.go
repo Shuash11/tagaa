@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -68,6 +69,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case chatRespMsg:
+		if !m.isRunning {
+			return m, nil
+		}
 		m.isRunning = false
 		m.phase = ""
 		m.scrollOffset = 0
@@ -128,6 +132,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.sidebarStep = 0
 			}
 			return m, nil
+		case "ctrl+x":
+			if m.isRunning && m.cancelFn != nil {
+				m.cancelFn()
+				m.cancelFn = nil
+				m.isRunning = false
+				m.phase = ""
+				m.messages = append(m.messages, Message{Kind: MsgSystem, Content: "Cancelled"})
+				m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
+			}
+			return m, nil
 		case "up", "down", "left", "right":
 			return m, nil
 		case "enter":
@@ -138,12 +152,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.messages = append(m.messages, Message{Kind: MsgUser, Content: t})
 				m.input = ""
 				m.isRunning = true
-				m.phase = "waiting"
+				m.phase = m.nextAgentName()
 				m.scrollOffset = 0
 				if len(m.agents) > 0 {
 					m.msgAgentIdx = (m.msgAgentIdx + 1) % len(m.agents)
 				}
-				return m, sendChatCmd(m)
+				ctx, cancel := context.WithCancel(context.Background())
+				m.cancelFn = cancel
+				return m, sendChatCmd(m, ctx)
 			}
 			return m, nil
 		case "backspace":

@@ -1,6 +1,10 @@
 package main
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"context"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 type provider struct{ id, label string }
 
@@ -58,6 +62,7 @@ type model struct {
 	agentEdit     bool
 	agentField    int
 	agentTemp     string
+	cancelFn      context.CancelFunc
 	w, h          int
 	ready         bool
 }
