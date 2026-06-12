@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -72,9 +73,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.isRunning {
 			return m, nil
 		}
-		m.isRunning = false
-		m.phase = ""
-		m.scrollOffset = 0
 		clr := lipgloss.Color("#00CED1")
 		for i, a := range m.agents {
 			if a.Name == msg.agentName {
@@ -82,12 +80,47 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
-		m.messages = append(m.messages, Message{Kind: MsgAgent, AgentName: msg.agentName, Content: msg.content, Color: clr})
-		m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
-		if len(m.agents) > 0 {
-			m.msgAgentIdx = (m.msgAgentIdx + 1) % len(m.agents)
+		if msg.content == "" {
+			m.isRunning = false
+			m.phase = ""
+			m.messages = append(m.messages, Message{Kind: MsgAgent, AgentName: msg.agentName, Content: "(empty response)", Color: clr})
+			m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
+			if len(m.agents) > 0 {
+				m.msgAgentIdx = (m.msgAgentIdx + 1) % len(m.agents)
+			}
+			return m, nil
 		}
-		return m, nil
+		m.streamText = msg.content
+		m.streamPos = 0
+		m.phase = msg.agentName
+		m.scrollOffset = 0
+		m.messages = append(m.messages, Message{Kind: MsgAgent, AgentName: msg.agentName, Content: "", Color: clr})
+		m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
+		return m, streamTickCmd()
+
+	case streamTickMsg:
+		if !m.isRunning || m.streamText == "" {
+			return m, nil
+		}
+		m.streamPos += 3
+		if m.streamPos >= len(m.streamText) {
+			m.streamPos = len(m.streamText)
+			m.isRunning = false
+			m.phase = ""
+		}
+		for i := len(m.messages) - 1; i >= 0; i-- {
+			if m.messages[i].Kind == MsgAgent {
+				m.messages[i].Content = m.streamText[:m.streamPos]
+				break
+			}
+		}
+		if !m.isRunning {
+			if len(m.agents) > 0 {
+				m.msgAgentIdx = (m.msgAgentIdx + 1) % len(m.agents)
+			}
+			return m, nil
+		}
+		return m, streamTickCmd()
 
 	case chatErrMsg:
 		m.isRunning = false
@@ -144,6 +177,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cancelFn = nil
 				m.isRunning = false
 				m.phase = ""
+				m.streamText = ""
 				m.messages = append(m.messages, Message{Kind: MsgSystem, Content: "Cancelled"})
 				m.messages = append(m.messages, Message{Kind: MsgSystem, Content: ""})
 			}
@@ -300,6 +334,12 @@ func (m model) View() string {
 		return lipgloss.JoinHorizontal(lipgloss.Top, mainCol, m.sideView())
 	}
 	return mainCol
+}
+
+func streamTickCmd() tea.Cmd {
+	return tea.Tick(15*time.Millisecond, func(t time.Time) tea.Msg {
+		return streamTickMsg{}
+	})
 }
 
 func main() {

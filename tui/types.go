@@ -63,6 +63,8 @@ type model struct {
 	agentField    int
 	agentTemp     string
 	cancelFn      context.CancelFunc
+	streamText    string
+	streamPos     int
 	w, h          int
 	ready         bool
 }
@@ -82,6 +84,8 @@ type chatRespMsg struct {
 type chatErrMsg struct {
 	content string
 }
+
+type streamTickMsg struct{}
 
 type savedConfig struct {
 	APIKeys map[string]string `json:"api_keys"`
